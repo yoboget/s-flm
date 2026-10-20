@@ -29,7 +29,6 @@ From: python:3.12-slim-bookworm
 
 %environment
     export PYTHONNOUSERSITE=1
-    export WANDB_MODE=offline
     export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 

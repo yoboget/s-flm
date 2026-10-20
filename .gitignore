@@ -180,3 +180,4 @@ multirun/
 
 # Apptainer images
 *.sif
+sbatch/
