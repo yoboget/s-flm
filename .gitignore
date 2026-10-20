@@ -177,3 +177,6 @@ checkpoints/
 multirun/
 .hydra/
 .nfs*
+
+# Apptainer images
+*.sif

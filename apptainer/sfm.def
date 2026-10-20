@@ -1,0 +1,47 @@
+Bootstrap: docker
+From: python:3.12-slim-bookworm
+
+# Build from the repo root (paths in %files are relative to it):
+#   apptainer build --fakeroot --bind $HOME/.cache/pip:/pipcache sfm.sif apptainer/sfm.def
+# The --bind is optional; it reuses the host pip cache instead of
+# re-downloading torch + CUDA wheels (~3 GB).
+
+%setup
+    # Mount point for the optional --bind of the host pip cache.
+    mkdir -p ${APPTAINER_ROOTFS}/pipcache
+
+%files
+    apptainer/requirements.lock.txt /opt/requirements.lock.txt
+
+%post
+    set -e
+    apt-get update
+    # git: lm_eval is installed from a pinned git commit.
+    apt-get install -y --no-install-recommends git ca-certificates
+    rm -rf /var/lib/apt/lists/*
+
+    if [ -n "$(ls -A /pipcache 2>/dev/null)" ]; then
+        export PIP_CACHE_DIR=/pipcache
+    else
+        export PIP_NO_CACHE_DIR=1
+    fi
+    pip install --retries 20 --timeout 60 -r /opt/requirements.lock.txt
+
+%environment
+    export PYTHONNOUSERSITE=1
+    export WANDB_MODE=offline
+    export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
+    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+%runscript
+    # Run from the repo root: `apptainer run --nv sfm.sif <hydra overrides>`
+    exec python -u -m main "$@"
+
+%test
+    python -c "import torch, torchvision, flash_attn, lightning, hydra, datasets; print('torch', torch.__version__)"
+
+%help
+    S-FLM training environment (torch 2.7.0 + cu12.6, flash_attn 2.8.3).
+    Run from the repo root, always with --nv for GPU access:
+        apptainer run --nv sfm.sif data=sudoku model=tiny-sphere-dit algo=sfm ...
+        apptainer exec --nv sfm.sif bash scripts/train/sudoku/sfm.sh
