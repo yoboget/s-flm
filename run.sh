@@ -3,7 +3,7 @@
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
 #SBATCH --gres=gpu:nvidia_rtx_a6000:1
-#SBATCH --cpus-per-task 4
+#SBATCH --cpus-per-task 8
 #SBATCH --mem=32000
 #SBATCH --partition private-kalousis-gpu,private-cui-gpu
 
@@ -24,6 +24,7 @@ srun apptainer exec --nv --env WANDB_MODE=online sfm.sif \
     data=sudoku \
     data.cache_dir="${PWD}/data_cache" \
     data.difficulty="${DIFFICULTY}" \
+    data.sudoku_num_workers=8
     model=tiny \
     algo=duo-base \
     algo.num_modes="${NUM_MODES}" \

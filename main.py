@@ -519,6 +519,47 @@ def _sudoku_eval(diffusion_model, config, logger, tokenizer):
     dataset = dataloader.get_dataset(
       config, tokenizer, mode='valid')
 
+  # Evaluate every number of sampling steps in sudoku.steps_list
+  # (default: sampler.steps), each in its own subdirectory.
+  steps_list = config.sudoku.get('steps_list', None)
+  if steps_list is None:
+    steps_list = [config.sampler.steps]
+  summary = {}
+  for num_steps in steps_list:
+    # Same seed for every number of steps, so that they are comparable
+    L.seed_everything(seed)
+    output_dir = os.path.join(
+      config.sudoku.output_dir, f'steps_{num_steps}')
+    results = _sudoku_eval_steps(
+      model, dataset, tokenizer, fabric, config, logger,
+      num_steps, output_dir)
+    if results is not None:
+      summary[num_steps] = {k: v for k, v in results.items()
+                            if k != 'records'}
+
+  if fabric.global_rank == 0:
+    summary_path = os.path.join(
+      config.sudoku.output_dir, 'summary.json')
+    with open(summary_path, 'w') as f:
+      json.dump(summary, f, indent=2)
+    logger.info('Sudoku summary (steps: accuracy / cell / blank cell):')
+    for num_steps, r in summary.items():
+      logger.info(
+        f'  {num_steps:>5}: {r["accuracy"] * 100:6.2f}% / '
+        f'{r["cell_accuracy"] * 100:6.2f}% / '
+        f'{r["blank_cell_accuracy"] * 100:6.2f}%')
+    logger.info(f'Summary saved to {summary_path}')
+
+
+def _sudoku_eval_steps(model, dataset, tokenizer, fabric, config,
+                       logger, num_steps, output_dir):
+  """Solves the validation puzzles with `num_steps` sampling steps.
+
+  Reports the accuracy (fully solved grids), the cell accuracy over
+  the 81 cells and the blank cell accuracy over the cells left empty
+  in the puzzle (the ones the model has to find).
+  Returns the merged results on rank 0, None on the other ranks.
+  """
   prompt_len = tokenizer.prompt_len
   rank = fabric.global_rank
   world_size = fabric.world_size
@@ -528,7 +569,7 @@ def _sudoku_eval(diffusion_model, config, logger, tokenizer):
 
   for batch_start in trange(
       0, len(local_indices), batch_size,
-      desc='Sudoku eval', disable=rank != 0):
+      desc=f'Sudoku eval ({num_steps} steps)', disable=rank != 0):
     batch_indices = local_indices[
       batch_start:batch_start + batch_size]
     B = len(batch_indices)
@@ -542,49 +583,66 @@ def _sudoku_eval(diffusion_model, config, logger, tokenizer):
 
     samples, _ = model.generate_samples(
       num_samples=B,
-      num_steps=config.sampler.steps,
+      num_steps=num_steps,
       prefix_tokens=prefix,
       prefix_lengths=prefix_lengths)
 
     gt = batch[:, prompt_len:]
     generated = samples[:, prompt_len:].cpu()
     correct = (generated == gt).all(dim=1)
+    # The puzzle (after the first BOS) is aligned with the solution
+    puzzle = batch[:, 1:1 + tokenizer.seq_len]
+    is_cell = gt != tokenizer.row_separator_id
+    is_blank = is_cell & (puzzle == tokenizer.empty_token_id)
+    cell_correct = (generated == gt) & is_cell
+    blank_correct = (generated == gt) & is_blank
 
     for i, idx in enumerate(batch_indices):
       records.append({
         'generated': tokenizer.decode(generated[i]),
         'ground_truth': tokenizer.decode(gt[i]),
         'correct': correct[i].item(),
+        'num_cells_correct': cell_correct[i].sum().item(),
+        'num_blank_cells': is_blank[i].sum().item(),
+        'num_blank_cells_correct': blank_correct[i].sum().item(),
       })
 
     del samples
     gc.collect()
 
   # Save per-rank results and aggregate on rank 0
-  os.makedirs(config.sudoku.output_dir, exist_ok=True)
-  rank_path = os.path.join(
-    config.sudoku.output_dir, f'rank_{rank:04d}.json')
+  os.makedirs(output_dir, exist_ok=True)
+  rank_path = os.path.join(output_dir, f'rank_{rank:04d}.json')
   with open(rank_path, 'w') as f:
     json.dump(records, f, indent=2)
 
   fabric.barrier()
 
+  results = None
   if fabric.global_rank == 0:
     all_records = []
     for r in range(world_size):
-      path = os.path.join(
-        config.sudoku.output_dir, f'rank_{r:04d}.json')
+      path = os.path.join(output_dir, f'rank_{r:04d}.json')
       with open(path) as f:
         all_records.extend(json.load(f))
     num_correct = sum(r['correct'] for r in all_records)
     total = len(all_records)
+    cell_accuracy = (sum(r['num_cells_correct'] for r in all_records)
+                     / (total * tokenizer.num_cells))
+    blank_cell_accuracy = (
+      sum(r['num_blank_cells_correct'] for r in all_records)
+      / max(sum(r['num_blank_cells'] for r in all_records), 1))
     logger.info(
-      f'Sudoku accuracy: {num_correct}/{total} '
-      f'({num_correct / total * 100:.2f}%)')
-    merged_path = os.path.join(
-      config.sudoku.output_dir, 'results.json')
+      f'Sudoku accuracy ({num_steps} steps): {num_correct}/{total} '
+      f'({num_correct / total * 100:.2f}%), cell accuracy '
+      f'{cell_accuracy * 100:.2f}%, blank cell accuracy '
+      f'{blank_cell_accuracy * 100:.2f}%')
+    merged_path = os.path.join(output_dir, 'results.json')
     results = {
+      'num_steps': num_steps,
       'accuracy': num_correct / total,
+      'cell_accuracy': cell_accuracy,
+      'blank_cell_accuracy': blank_cell_accuracy,
       'num_correct': num_correct,
       'num_total': total,
       'records': all_records,
@@ -594,6 +652,7 @@ def _sudoku_eval(diffusion_model, config, logger, tokenizer):
     logger.info(f'Results saved to {merged_path}')
 
   fabric.barrier()
+  return results
 
 
 class FakeTokenizer:

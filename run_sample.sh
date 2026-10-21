@@ -13,8 +13,10 @@
 # validation puzzles given their clues and reports the accuracy (fully solved grids).
 # Submit from the repo root: `mkdir -p sbatch && sbatch run_sample.sh`
 # The defaults match run.sh; override e.g. with
-#   `SAMPLER=dfm HYP_SELECTION=average STEPS=1024 sbatch run_sample.sh`
-# Results: ${OUTPUT_DIR}/results.json (accuracy + every generated grid).
+#   `SAMPLER=dfm HYP_SELECTION=average STEPS=8,32,1024 sbatch run_sample.sh`
+# Every number of sampling steps in STEPS is evaluated in the same launch.
+# Results: ${OUTPUT_DIR}/summary.json (accuracy, cell and blank cell accuracy per number of steps)
+# and ${OUTPUT_DIR}/steps_<n>/results.json (+ every generated grid).
 
 DIFFICULTY="${DIFFICULTY:-easy}"      # easy / medium / hard
 NUM_MODES="${NUM_MODES:-32}"          # must match the checkpoint
@@ -24,8 +26,8 @@ CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/last.ckpt
 
 SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
 HYP_SELECTION="${HYP_SELECTION:-sample}"  # sample / average
-STEPS="${STEPS:-180}"
-OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${SAMPLER}_${HYP_SELECTION}_${STEPS}steps}"
+STEPS="${STEPS:-8,16,32,64,180}"      # comma-separated numbers of sampling steps
+OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${SAMPLER}_${HYP_SELECTION}}"
 
 srun apptainer exec --nv --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
     python -u -m main \
@@ -39,7 +41,7 @@ srun apptainer exec --nv --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ON
     algo.num_modes="${NUM_MODES}" \
     algo.hyp_loss="${HYP_LOSS}" \
     sampler="${SAMPLER}" \
-    sampler.steps="${STEPS}" \
+    sudoku.steps_list="[${STEPS}]" \
     sampler.hyp_selection="${HYP_SELECTION}" \
     noise=log-linear \
     sudoku.batch_size=256 \

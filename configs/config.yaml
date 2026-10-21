@@ -15,6 +15,7 @@ mode: train  # train / ppl_eval / sample_eval / gsm8k_eval / sudoku_eval
 sudoku:
   output_dir: ${cwd:}/sudoku_eval
   batch_size: 64
+  steps_list: null  # e.g. [8, 16, 32, 180]: evaluate each number of sampling steps in one launch (null: sampler.steps)
 
 gsm8k:
   input_file: null  # if set, skip sampling and evaluate directly from this JSON file
