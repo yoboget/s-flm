@@ -1,0 +1,11 @@
+# Simple iterative denoising: sample x0 ~ p(x0 | xt), re-noise to x_s ~ q(x_s | x0) (MDLM / DUO)
+predictor: sid
+steps: 1024
+steps_policy: full      # full: use steps as-is / proportional: steps * num_tokens_to_generate
+noise_removal: ancestral  # ancestral (sample) / greedy (argmax) at the final step
+use_float64: true
+p_nucleus: 1.0
+temperature: 1.0
+hyp_selection: sample   # algo.num_modes > 1: sample one mode per sequence at each step / average the mixture
+num_sample_batches: 2
+num_sample_log: 2
