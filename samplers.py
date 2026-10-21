@@ -15,6 +15,7 @@ import torch
 import torch.nn.functional as F
 from dataclass_patch import dataclass
 import candi_utils
+import modes
 import utils
 
 
@@ -369,11 +370,13 @@ class AncestralSampler(Sampler):
 
   def __init__(self, use_float64=False,
                noise_removal='ancestral', steps_policy='full',
-               temperature=1.0):
+               temperature=1.0, hyp_selection='sample'):
     self.use_float64 = use_float64
     self.noise_removal = noise_removal
     self.steps_policy = steps_policy
     self.temperature = temperature
+    # Multi-mode denoiser only, see modes.py
+    self.hyp_selection = hyp_selection
     assert noise_removal in ('ancestral', 'greedy')
     assert steps_policy in ('full', 'proportional')
 
@@ -407,7 +410,9 @@ class AncestralSampler(Sampler):
       prefix_lengths=prefix_lengths)
     return state
 
-  def step(self, model, state):
+  def _predict_x0(self, model, state):
+    """Denoiser prediction log p(x0 | xt) at the current step, with the
+    noise levels alpha_t and alpha_s of the step."""
     num_steps = len(state.timesteps) - 1
     is_last_step = (state.step_idx == num_steps - 1)
     t = state.timesteps[state.step_idx] * state.ones
@@ -420,10 +425,26 @@ class AncestralSampler(Sampler):
       _, alpha_s = model.noise(s)
     sigma_t = model._sigma_from_alphat(alpha_t)
 
-    log_probs = _maybe_cast_log_probs(
-      model.forward(xt=state.xt, sigma=sigma_t,
-                    context=AncestralContext(temperature=self.temperature)),
-      self.use_float64)
+    output = model.forward(
+      xt=state.xt, sigma=sigma_t,
+      context=AncestralContext(temperature=self.temperature))
+    if isinstance(output, tuple):  # multi-mode denoiser
+      output = modes.select_mode(*output, self.hyp_selection)
+    log_probs = _maybe_cast_log_probs(output, self.use_float64)
+    return log_probs, alpha_t, alpha_s, is_last_step
+
+  def _end_step(self, state, is_last_step):
+    self._project_prefix(state.xt, state.prefix_tokens, 
+                         state.prefix_lengths)
+    state.nfe += 1
+    state.step_idx += 1
+    if is_last_step:
+      state.done = True
+    return state
+
+  def step(self, model, state):
+    log_probs, alpha_t, alpha_s, is_last_step = self._predict_x0(
+      model, state)
 
     current_tokens = state.xt[:, state.start_idx:]
     log_probs_window = log_probs[:, state.start_idx:]
@@ -432,13 +453,56 @@ class AncestralSampler(Sampler):
       self, model, log_probs_window, current_tokens,
       alpha_s, alpha_t, is_last_step=is_last_step)
 
-    self._project_prefix(state.xt, state.prefix_tokens, 
-                         state.prefix_lengths)
-    state.nfe += 1
-    state.step_idx += 1
-    if is_last_step:
-      state.done = True
-    return state
+    return self._end_step(state, is_last_step)
+
+
+class SIDSampler(AncestralSampler):
+  """Simple iterative denoising (ModeFlowGraph 'sid'): sample x0 from
+  the denoiser prediction p(x0 | xt), then noise it again to the next
+  (lower) noise level, x_s ~ q(x_s | x0). Works for MDLM & DUO."""
+
+  def step(self, model, state):
+    log_probs, _, alpha_s, is_last_step = self._predict_x0(
+      model, state)
+
+    current_tokens = state.xt[:, state.start_idx:]
+    x0 = _decode_direct_tokens(
+      log_probs[:, state.start_idx:],
+      greedy=is_last_step and self.noise_removal == 'greedy')
+    if not is_last_step:
+      x0 = model.q_xt(x0, alpha_s, use_pure_noise=False)
+    current_tokens[:] = x0
+
+    return self._end_step(state, is_last_step)
+
+
+class DFMSampler(AncestralSampler):
+  """Discrete flow matching (ModeFlowGraph 'dfm'), Euler steps along the
+  mixture path between the prior and the data. In flow time, with
+  kappa the probability of a token to be clean (alpha in diffusion
+  time),
+    p_t(x) = kappa(t) delta(x, x1) + (1 - kappa(t)) prior(x),
+  and the Euler step of size dt is
+    p(x_{t+dt}) = delta(x_t) + dt * kappa'(t) / (1 - kappa(t))
+                               * (p(x1 | x_t) - delta(x_t)),
+  i.e. each token jumps to a sample of p(x1 | x_t) with probability
+  (alpha_s - alpha_t) / (1 - alpha_t). Works for MDLM & DUO (for MDLM,
+  it coincides with ancestral sampling)."""
+
+  def step(self, model, state):
+    log_probs, alpha_t, alpha_s, is_last_step = self._predict_x0(
+      model, state)
+
+    current_tokens = state.xt[:, state.start_idx:]
+    x1 = _decode_direct_tokens(
+      log_probs[:, state.start_idx:],
+      greedy=is_last_step and self.noise_removal == 'greedy')
+    jump_prob = ((alpha_s - alpha_t) / (1 - alpha_t)).clamp(0, 1)
+    jump = torch.rand(current_tokens.shape,
+                      device=current_tokens.device) < jump_prob
+    current_tokens[:] = torch.where(jump, x1, current_tokens)
+
+    return self._end_step(state, is_last_step)
 
 @dataclass(kw_only=True)
 class ARState(BaseState):
@@ -1032,12 +1096,16 @@ def run_sampler(sampler, model, num_samples, *,
 def get_sampler(config):
   s = config.sampler
 
-  if s.predictor == 'ancestral':
-    return AncestralSampler(
+  if s.predictor in ('ancestral', 'sid', 'dfm'):
+    sampler_cls = {'ancestral': AncestralSampler,
+                   'sid': SIDSampler,
+                   'dfm': DFMSampler}[s.predictor]
+    return sampler_cls(
       use_float64=s.use_float64,
       noise_removal=s.noise_removal,
       steps_policy=s.steps_policy,
-      temperature=s.temperature)
+      temperature=s.temperature,
+      hyp_selection=getattr(s, 'hyp_selection', 'sample'))
 
   if s.predictor == 'ar':
     return ARSampler(

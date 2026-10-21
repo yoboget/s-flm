@@ -17,7 +17,8 @@ From: python:3.12-slim-bookworm
     set -e
     apt-get update
     # git: lm_eval is installed from a pinned git commit.
-    apt-get install -y --no-install-recommends git ca-certificates
+    # gcc + libc6-dev: triton compiles a C helper on first kernel launch.
+    apt-get install -y --no-install-recommends git ca-certificates gcc libc6-dev
     rm -rf /var/lib/apt/lists/*
 
     if [ -n "$(ls -A /pipcache 2>/dev/null)" ]; then
@@ -38,6 +39,7 @@ From: python:3.12-slim-bookworm
 
 %test
     python -c "import torch, torchvision, flash_attn, lightning, hydra, datasets; print('torch', torch.__version__)"
+    gcc --version | head -1
 
 %help
     S-FLM training environment (torch 2.7.0 + cu12.6, flash_attn 2.8.3).

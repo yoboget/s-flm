@@ -10,6 +10,7 @@ import transformers
 import dataloader
 import metrics
 import models
+import modes
 import models.candi_dit
 import noise_schedules
 import samplers
@@ -113,6 +114,20 @@ class TrainerBase(L.LightningModule):
         raise ValueError(config.neg_infinity_mode)
     self.fast_forward_epochs = None
     self.fast_forward_batches = None
+
+    self.num_modes = getattr(config.algo, 'num_modes', 1)
+    self.hyp_loss = getattr(config.algo, 'hyp_loss', 'mixture')
+    if self.num_modes > 1:
+      if (config.model.type != 'dit'
+          or config.algo.name not in ('mdlm', 'duo_base')):
+        raise ValueError('num_modes > 1 is only implemented for the '
+                         'dit backbone with mdlm / duo_base.')
+      if getattr(config.algo, 'post_process_mode',
+                 'log_probs') != 'log_probs':
+        raise ValueError('num_modes > 1 requires '
+                         'post_process_mode=log_probs.')
+      if self.hyp_loss not in modes.HYP_LOSSES:
+        raise ValueError(self.hyp_loss)
 
   def _process_sigma(self, sigma, context=None):
     raise NotImplementedError
@@ -298,16 +313,28 @@ class TrainerBase(L.LightningModule):
     with torch.amp.autocast('cuda', dtype=torch.float32):
       model_output = self.backbone(x0, xt, sigma, context)
 
+    mode_logits = None
+    if isinstance(model_output, tuple):
+      # Multi-mode backbone: process each mode as its own sequence
+      mode_logits, model_output = model_output
+      B, L, M, V = model_output.shape
+      model_output = model_output.transpose(1, 2).reshape(B * M, L, V)
+
     if (context is not None 
         and 'temperature' in context 
         and context.temperature != 1.0):
       model_output = model_output / context.temperature
 
-    return self._process_model_output(
+    output = self._process_model_output(
       model_output=model_output,
-      xt=xt,
+      xt=xt if mode_logits is None else xt.repeat_interleave(M, 0),
       sigma=sigma,
       context=context)
+    if mode_logits is None:
+      return output
+    # (log pi (B, M), log p_m(x0 | xt) (B, L, M, V))
+    return (mode_logits.log_softmax(-1),
+            output.view(B, M, L, V).transpose(1, 2))
 
   def on_train_epoch_start(self):
     self.metrics.reset()
@@ -553,6 +580,8 @@ class Diffusion(TrainerBase):
                    valid_tokens=valid_tokens)
     log_x_theta = self.forward(
       x0=x0, xt=xt, sigma=sigma, context=context)
+    if self.num_modes > 1:
+      return self._mode_nll(log_x_theta, xt, x0, valid_tokens), t
     utils.print_nans(log_x_theta, 'model_output')
     loss = self.nll_per_token(
       log_x_theta=log_x_theta,
@@ -564,6 +593,20 @@ class Diffusion(TrainerBase):
       context=context,
       train_mode=train_mode)
     return loss, t
+
+  def _mode_nll(self, output, xt, x0, valid_tokens):
+    """Multi-mode loss (see modes.py): cross-entropy of the mixture,
+    without the ELBO weights of nll_per_token (as in ModeFlowGraph)."""
+    if valid_tokens is None:
+      valid_tokens = torch.ones_like(x0)
+    weight = valid_tokens.bool()
+    if self.diffusion_type == 'absorbing':
+      # Only the masked tokens are predicted
+      weight = weight & (xt == self.mask_index)
+    mode_log_probs, log_probs = output
+    return modes.mode_nll(
+      mode_log_probs, log_probs, x0, weight.to(log_probs.dtype),
+      valid_tokens.to(log_probs.dtype), self.hyp_loss)
 
 
 class AbsorbingState(Diffusion):

@@ -517,11 +517,20 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
       blocks.append(block)
     self.blocks = nn.ModuleList(blocks)
 
+    # num_modes > 1: M per-token predictions and a sequence-level
+    # mode head (see modes.py)
+    self.num_modes = getattr(config.algo, 'num_modes', 1)
     self.output_layer = DDiTFinalLayer(
       hidden_size=dim,
-      out_channels=vocab_size,
+      out_channels=vocab_size * self.num_modes,
       cond_dim=cond_dim,
       adaLN=self.adaLN)
+    if self.num_modes > 1:
+      # Zero init would make all the modes start identical
+      self.output_layer.linear.reset_parameters()
+      self.mode_head = nn.Sequential(
+        nn.Linear(dim, dim), nn.SiLU(),
+        nn.Linear(dim, self.num_modes))
     self.ctx_cached_len = 0
 
   def _get_bias_dropout_scale(self):
@@ -553,8 +562,13 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     with torch.amp.autocast('cuda', dtype=torch.bfloat16):
       for i in range(len(self.blocks)):
         x = self.blocks[i](x, rotary_cos_sin, c=t_cond, kv_cache=kv_cache)
+      h = x
       x = self.output_layer(x, c=t_cond)
 
     if kv_cache:
       self.ctx_cached_len += xt.shape[1]
-    return x
+    if self.num_modes == 1:
+      return x
+    # mode head on the mean of the hidden states over the sequence
+    mode_logits = self.mode_head(h.mean(1).float())
+    return mode_logits, x.view(*x.shape[:2], self.num_modes, -1)

@@ -8,3 +8,4 @@ p_nucleus: 1.0
 temperature: 1.0
 num_sample_batches: 2
 num_sample_log: 2
+hyp_selection: sample   # algo.num_modes > 1: sample one mode per sequence at each step / average the mixture

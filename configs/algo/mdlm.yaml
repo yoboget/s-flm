@@ -9,3 +9,5 @@ loss_type: elbo  # elbo, low_var
 
 post_process_mode: log_probs  # log_probs / logits (sampling-only for logits)
 adaLN: True
+num_modes: 1  # > 1: multi-mode denoiser, M predictions and a sequence-level mode head (see modes.py)
+hyp_loss: mixture  # num_modes > 1: mixture / wta / tempered
