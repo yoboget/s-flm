@@ -25,7 +25,7 @@ TRAIN_RUN="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
 CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/last.ckpt}"
 
 SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
-HYP_SELECTION="${HYP_SELECTION:-sample}"  # sample / average
+HYP_SELECTION="${HYP_SELECTION:-average}"  # sample / average
 STEPS="${STEPS:-8,16,32,64,128}"      # comma-separated numbers of sampling steps
 OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${SAMPLER}_${HYP_SELECTION}}"
 
