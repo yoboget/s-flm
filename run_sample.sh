@@ -27,7 +27,7 @@ HYP_SELECTION="${HYP_SELECTION:-sample}"  # sample / average
 STEPS="${STEPS:-180}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${SAMPLER}_${HYP_SELECTION}_${STEPS}steps}"
 
-srun apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
+srun apptainer exec --nv --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
     python -u -m main \
     mode=sudoku_eval \
     eval.checkpoint_path="${CKPT_PATH}" \
