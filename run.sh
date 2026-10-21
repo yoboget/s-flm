@@ -14,7 +14,7 @@
 # Override the difficulty with: `DIFFICULTY=hard sbatch run.sh`
 # Resubmitting with the same difficulty resumes from the last checkpoint.
 
-DIFFICULTY="${DIFFICULTY:-easy}"      # easy / medium / hard
+DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
 NUM_MODES="${NUM_MODES:-32}"          # 1: standard single-mode denoiser
 HYP_LOSS="${HYP_LOSS:-mixture}"       # mixture / wta / tempered
 RUN_NAME="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
