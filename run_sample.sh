@@ -18,7 +18,7 @@
 # Results: ${OUTPUT_DIR}/summary.json (accuracy, cell and blank cell accuracy per number of steps)
 # and ${OUTPUT_DIR}/steps_<n>/results.json (+ every generated grid).
 
-DIFFICULTY="${DIFFICULTY:-easy}"      # easy / medium / hard
+DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
 NUM_MODES="${NUM_MODES:-32}"          # must match the checkpoint
 HYP_LOSS="${HYP_LOSS:-mixture}"       # only used to find the training run
 TRAIN_RUN="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
