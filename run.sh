@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu:nvidia_geforce_rtx_a4090:1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
-#SBATCH --partition private-kalousis-gpu,private-cui-gpu
+#SBATCH --partition private-kalousis-gpu,private-cui-gpu,public-gpu,shared-gpu
 
 #SBATCH --time 12:00:00
 
