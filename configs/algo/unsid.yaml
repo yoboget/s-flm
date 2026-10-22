@@ -1,0 +1,14 @@
+name: unsid
+diffusion_type: dirichlet  # tokens are points on the simplex, xt ~ Dir(1 + c(alpha_t) onehot(x0))
+backbone: dit
+parameterization: mean
+time_conditioning: True
+T: 0
+subs_masking: False
+causal_attention: False
+loss_type: ce
+adaLN: True
+scale: 3.0  # c(alpha_t) = -scale * log(1 - alpha_t), the Dirichlet concentration on x0
+eps: 1e-6   # clamp on 1 - alpha_t, caps the concentration at -scale * log(eps)
+num_modes: 1  # > 1: multi-mode denoiser, M predictions and a sequence-level mode head (see modes.py)
+hyp_loss: mixture  # num_modes > 1: mixture / wta / tempered
