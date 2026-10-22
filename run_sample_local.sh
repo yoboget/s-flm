@@ -11,12 +11,12 @@
 DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
 NUM_MODES="${NUM_MODES:-32}"          # must match the checkpoint
 HYP_LOSS="${HYP_LOSS:-mixture}"       # only used to find the training run
-TRAIN_RUN="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
+TRAIN_RUN="sudoku_duo_unsid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
 CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/last.ckpt}"
 
 SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
-HYP_SELECTION="${HYP_SELECTION:-sample}"  # sample / average
-STEPS="${STEPS:-256}"      # comma-separated numbers of sampling steps
+HYP_SELECTION="${HYP_SELECTION:-average}"  # sample / average
+STEPS="${STEPS:-8, 16, 32, 64, 128}"      # comma-separated numbers of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-256}"       # lower it if the GPU runs out of memory
 OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${SAMPLER}_${HYP_SELECTION}}"
 
@@ -28,7 +28,7 @@ apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_L
     data.cache_dir="${PWD}/data_cache" \
     data.difficulty="${DIFFICULTY}" \
     model=tiny \
-    algo=duo-base \
+    algo=unsid \
     algo.num_modes="${NUM_MODES}" \
     algo.hyp_loss="${HYP_LOSS}" \
     sampler="${SAMPLER}" \
