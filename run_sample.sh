@@ -21,7 +21,7 @@
 DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
 NUM_MODES="${NUM_MODES:-32}"          # must match the checkpoint
 HYP_LOSS="${HYP_LOSS:-mixture}"       # only used to find the training run
-TRAIN_RUN="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
+TRAIN_RUN="sudoku_duo_unsid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
 CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/last.ckpt}"
 
 SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
@@ -37,7 +37,7 @@ srun apptainer exec --nv --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ON
     data.cache_dir="${PWD}/data_cache" \
     data.difficulty="${DIFFICULTY}" \
     model=tiny \
-    algo=duo-base \
+    algo=unsid \
     algo.num_modes="${NUM_MODES}" \
     algo.hyp_loss="${HYP_LOSS}" \
     sampler="${SAMPLER}" \
