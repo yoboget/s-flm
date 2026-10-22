@@ -2,7 +2,7 @@
 #SBATCH --job-name sudoku-duo-modes
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
-#SBATCH --gres=gpu:nvidia_rtx_a5000:1
+#SBATCH --gres=gpu:nvidia_rtx_a5500:1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
 #SBATCH --partition private-kalousis-gpu,private-cui-gpu
