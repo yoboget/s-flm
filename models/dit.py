@@ -439,18 +439,22 @@ class DDiTBlock(nn.Module):
 
 
 class EmbeddingLayer(nn.Module):
-  def __init__(self, dim, vocab_dim):
+  def __init__(self, dim, vocab_dim, simplex_input=False):
     super().__init__()
     self.embedding = nn.Parameter(torch.empty((vocab_dim, dim)))
     torch.nn.init.kaiming_uniform_(self.embedding, a=math.sqrt(5))
+    # True: 3D inputs are already points on the simplex (UNSID),
+    # embedded as they are instead of through a softmax.
+    self.simplex_input = simplex_input
 
   def forward(self, x):
     if x.ndim == 2:
       return self.embedding[x]
     assert x.ndim == 3
+    weights = x if self.simplex_input else x.softmax(dim=-1)
     return torch.einsum(
       "blv,ve->ble",
-      torch.nn.functional.softmax(x, dim=-1).float(),
+      weights.float(),
       self.embedding.float()).to(x.dtype)
 
 
@@ -491,7 +495,9 @@ class DIT(nn.Module, huggingface_hub.PyTorchModelHubMixin):
     self.vocab_size = vocab_size
     dim = config.model.hidden_size
     cond_dim = config.model.cond_dim
-    self.vocab_embed = EmbeddingLayer(dim, vocab_size)
+    self.vocab_embed = EmbeddingLayer(
+      dim, vocab_size,
+      simplex_input=getattr(config.algo, 'diffusion_type', None) == 'dirichlet')
     if self.adaLN:
       self.sigma_map = TimestepEmbedder(cond_dim)
     self.rotary_emb = Rotary(dim // config.model.n_heads)

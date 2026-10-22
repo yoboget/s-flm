@@ -685,6 +685,8 @@ def main(config):
     diffusion_model = algo.MDLM
   elif config.algo.name == 'duo_base':
     diffusion_model = algo.DUO_BASE
+  elif config.algo.name == 'unsid':
+    diffusion_model = algo.UNSID
   elif config.algo.name == 'sfm':
     diffusion_model = algo.SFM
   elif config.algo.name == 'flm':

@@ -206,6 +206,57 @@ class DUO_BASE(trainer_base.UniformState):
     return diffusion_loss
 
 
+class UNSID(trainer_base.Diffusion):
+  """Unrestrained simplex denoising (Dirichlet probability path).
+
+  Each token is a point on the simplex,
+    xt ~ Dir(1 + c(alpha_t) * onehot(x0)),
+    c(alpha_t) = -scale * log(1 - alpha_t),
+  so alpha_t = 0 is the uniform prior Dir(1) and alpha_t -> 1
+  concentrates on the vertex x0. With noise=log-linear
+  (alpha_t = 1 - t) this is UNSID's 'dirch' prior. The denoiser reads
+  the simplex points and is trained with the cross-entropy on x0;
+  sampling is sid (sample x0, re-noise to the next level).
+  """
+
+  def __init__(self, config, tokenizer):
+    super().__init__(config, tokenizer)
+    self.scale = config.algo.scale
+    self.eps = config.algo.eps
+    self._validate_configuration()
+
+  def _process_model_output(
+      self, model_output, xt, sigma, context=None):
+    del xt, sigma, context
+    return model_output.log_softmax(dim=-1)
+
+  def concentration(self, alpha_t):
+    return -self.scale * torch.log((1 - alpha_t).clamp(min=self.eps))
+
+  def q_xt(self, x, alpha_t, use_pure_noise, valid_tokens=None):
+    """Samples xt (B, L, V) on the simplex; prompt positions
+    (valid_tokens == 0) stay one-hot."""
+    one_hot = F.one_hot(x, self.vocab_size).float()
+    if use_pure_noise:
+      params = torch.ones_like(one_hot)
+    else:
+      conc = self.concentration(alpha_t.float())  # (B, 1)
+      params = 1 + conc[..., None] * one_hot
+    xt = torch.distributions.Dirichlet(params).sample()
+    if valid_tokens is not None:
+      xt = torch.where(valid_tokens.bool()[..., None], xt, one_hot)
+    return xt
+
+  def prior_sample(self, *batch_dims):
+    return torch.distributions.Dirichlet(torch.ones(
+      *batch_dims, self.vocab_size, device=self.device)).sample()
+
+  def nll_per_token(self, log_x_theta, xt, x0, alpha_t, dalpha_t,
+                    low_var=False, context=None, train_mode=False):
+    del xt, alpha_t, dalpha_t, low_var, context, train_mode
+    return -log_x_theta.gather(-1, x0.unsqueeze(-1)).squeeze(-1)
+
+
 class SFM(trainer_base.Diffusion):
   def __init__(self, config, tokenizer):
     super().__init__(config, tokenizer)

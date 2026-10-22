@@ -476,6 +476,33 @@ class SIDSampler(AncestralSampler):
     return self._end_step(state, is_last_step)
 
 
+class DirichletSIDSampler(AncestralSampler):
+  """Simple iterative denoising for UNSID (Dirichlet path, algo.UNSID):
+  the state is a point on the simplex per token (B, L, V). Sample x0
+  from p(x0 | xt), then noise it again to the next noise level,
+  x_s ~ Dir(1 + c(alpha_s) onehot(x0)). The last step returns x0."""
+
+  def _project_prefix(self, xt, prefix_tokens, prefix_lengths):
+    if prefix_tokens is not None and xt.ndim == 3:
+      prefix_tokens = F.one_hot(
+        prefix_tokens, xt.shape[-1]).to(xt.dtype)
+    return super()._project_prefix(xt, prefix_tokens, prefix_lengths)
+
+  def step(self, model, state):
+    log_probs, _, alpha_s, is_last_step = self._predict_x0(
+      model, state)
+
+    x0 = _decode_direct_tokens(
+      log_probs,
+      greedy=is_last_step and self.noise_removal == 'greedy')
+    if is_last_step:
+      state.xt = x0
+    else:
+      state.xt = model.q_xt(x0, alpha_s, use_pure_noise=False)
+
+    return self._end_step(state, is_last_step)
+
+
 class DFMSampler(AncestralSampler):
   """Discrete flow matching (ModeFlowGraph 'dfm'), Euler steps along the
   mixture path between the prior and the data. In flow time, with
@@ -1095,6 +1122,17 @@ def run_sampler(sampler, model, num_samples, *,
 
 def get_sampler(config):
   s = config.sampler
+
+  if config.algo.get('diffusion_type', None) == 'dirichlet':
+    if s.predictor != 'sid':
+      raise ValueError('algo=unsid only supports sampler=sid, '
+                       f'got {s.predictor}')
+    return DirichletSIDSampler(
+      use_float64=s.use_float64,
+      noise_removal=s.noise_removal,
+      steps_policy=s.steps_policy,
+      temperature=s.temperature,
+      hyp_selection=getattr(s, 'hyp_selection', 'sample'))
 
   if s.predictor in ('ancestral', 'sid', 'dfm'):
     sampler_cls = {'ancestral': AncestralSampler,

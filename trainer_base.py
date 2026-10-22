@@ -119,9 +119,9 @@ class TrainerBase(L.LightningModule):
     self.hyp_loss = getattr(config.algo, 'hyp_loss', 'mixture')
     if self.num_modes > 1:
       if (config.model.type != 'dit'
-          or config.algo.name not in ('mdlm', 'duo_base')):
+          or config.algo.name not in ('mdlm', 'duo_base', 'unsid')):
         raise ValueError('num_modes > 1 is only implemented for the '
-                         'dit backbone with mdlm / duo_base.')
+                         'dit backbone with mdlm / duo_base / unsid.')
       if getattr(config.algo, 'post_process_mode',
                  'log_probs') != 'log_probs':
         raise ValueError('num_modes > 1 requires '
