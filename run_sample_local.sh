@@ -19,7 +19,7 @@ SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
 HYP_SELECTION="${HYP_SELECTION:-sample}"  # sample / average
 STEPS="${STEPS:-8, 16, 32, 64, 128}"      # comma-separated numbers of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-256}"       # lower it if the GPU runs out of memory
-OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${CKPT}/${SAMPLER}_${HYP_SELECTION}}"
+OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${CKPT}/${SAMPLER}_elbo_${HYP_SELECTION}}"
 
 apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
     python -u -m main \
