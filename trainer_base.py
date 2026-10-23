@@ -128,19 +128,23 @@ class TrainerBase(L.LightningModule):
                          'post_process_mode=log_probs.')
       if self.hyp_loss not in modes.HYP_LOSSES:
         raise ValueError(self.hyp_loss)
-    # Time weighting of the cross-entropy losses (multi-mode, UNSID):
-    # 'none' weights all noise levels equally, 'elbo' by
-    # -alpha'_t / (1 - alpha_t) (MDLM's ELBO weight, 1 / t with
-    # noise=log-linear).
+    # Weighting of the noise levels in the cross-entropy losses:
+    #  mdlm / duo_base, num_modes > 1: 'none' scores each mode by the
+    #    cross-entropy of x0, 'elbo' by its ELBO (nll_per_token of the
+    #    algorithm). With num_modes = 1 they always train with the ELBO.
+    #  unsid: 'none' weights all noise levels equally, 'elbo' by
+    #    -alpha'_t / (1 - alpha_t) (MDLM's ELBO weight, 1 / t with
+    #    noise=log-linear), 'log' by -alpha'_t * -log(1 - alpha_t)
+    #    (log(1 / t) with noise=log-linear, close to the profile of
+    #    DUO's ELBO).
     self.loss_weighting = getattr(config.algo, 'loss_weighting', 'none')
-    if self.loss_weighting not in ('none', 'elbo'):
-      raise ValueError(f'Unknown loss_weighting {self.loss_weighting}. '
-                       'Available: none, elbo')
-    if (self.loss_weighting != 'none' and self.num_modes == 1
-        and config.algo.diffusion_type != 'dirichlet'):
-      raise ValueError('loss_weighting only applies to the cross-entropy '
-                       'losses (num_modes > 1 or algo=unsid); mdlm / '
-                       'duo_base with num_modes=1 train with the ELBO.')
+    allowed = (('none', 'elbo', 'log')
+               if config.algo.diffusion_type == 'dirichlet'
+               else ('none', 'elbo'))
+    if self.loss_weighting not in allowed:
+      raise ValueError(
+        f'Unknown loss_weighting {self.loss_weighting} for '
+        f'{config.algo.name}. Available: {", ".join(allowed)}')
 
   def _process_sigma(self, sigma, context=None):
     raise NotImplementedError
@@ -593,8 +597,10 @@ class Diffusion(TrainerBase):
                    valid_tokens=valid_tokens)
     log_x_theta = self.forward(
       x0=x0, xt=xt, sigma=sigma, context=context)
+    low_var = train_mode and self.loss_type == 'low_var'
     if self.num_modes > 1:
-      loss = self._mode_nll(log_x_theta, xt, x0, valid_tokens)
+      loss = self._mode_nll(log_x_theta, xt, x0, alpha_t, dalpha_t,
+                            valid_tokens, low_var)
       return self._weight_loss(loss, alpha_t, dalpha_t), t
     utils.print_nans(log_x_theta, 'model_output')
     loss = self.nll_per_token(
@@ -603,21 +609,28 @@ class Diffusion(TrainerBase):
       x0=x0,
       alpha_t=alpha_t,
       dalpha_t=dalpha_t,
-      low_var=train_mode and self.loss_type == 'low_var',
+      low_var=low_var,
       context=context,
       train_mode=train_mode)
     return self._weight_loss(loss, alpha_t, dalpha_t), t
 
   def _weight_loss(self, loss, alpha_t, dalpha_t):
-    """algo.loss_weighting='elbo': weights the (B, L) cross-entropy
-    by -alpha'_t / (1 - alpha_t), (B, 1)."""
-    if self.loss_weighting == 'none':
+    """algo=unsid: weights the (B, L) cross-entropy by the
+    algo.loss_weighting of the noise level, (B, 1)."""
+    if (self.diffusion_type != 'dirichlet'
+        or self.loss_weighting == 'none'):
       return loss
-    return loss * (-dalpha_t / (1 - alpha_t).clamp(min=1e-6))
+    one_minus_alpha = (1 - alpha_t).clamp(min=1e-6)
+    if self.loss_weighting == 'elbo':
+      return loss * (-dalpha_t / one_minus_alpha)
+    return loss * (dalpha_t * one_minus_alpha.log())  # 'log'
 
-  def _mode_nll(self, output, xt, x0, valid_tokens):
-    """Multi-mode loss (see modes.py): cross-entropy of the mixture,
-    without the ELBO weights of nll_per_token (as in ModeFlowGraph)."""
+  def _mode_nll(self, output, xt, x0, alpha_t, dalpha_t, valid_tokens,
+                low_var):
+    """Multi-mode loss (see modes.py). Each mode is scored by the
+    cross-entropy of x0 (as in ModeFlowGraph), or with
+    loss_weighting='elbo' (mdlm / duo_base) by the ELBO of x0 under
+    it, nll_per_token of the algorithm."""
     if valid_tokens is None:
       valid_tokens = torch.ones_like(x0)
     weight = valid_tokens.bool()
@@ -625,8 +638,21 @@ class Diffusion(TrainerBase):
       # Only the masked tokens are predicted
       weight = weight & (xt == self.mask_index)
     mode_log_probs, log_probs = output
+    if (self.loss_weighting == 'elbo'
+        and self.diffusion_type != 'dirichlet'):
+      B, L, M, V = log_probs.shape
+      nelbo = self.nll_per_token(
+        log_x_theta=log_probs.transpose(1, 2).reshape(B * M, L, V),
+        xt=xt.repeat_interleave(M, 0),
+        x0=x0.repeat_interleave(M, 0),
+        alpha_t=alpha_t.repeat_interleave(M, 0),
+        dalpha_t=dalpha_t.repeat_interleave(M, 0),
+        low_var=low_var)
+      token_lp = -nelbo.view(B, M, L).transpose(1, 2)
+    else:
+      token_lp = modes.token_log_probs(log_probs, x0)
     return modes.mode_nll(
-      mode_log_probs, log_probs, x0, weight.to(log_probs.dtype),
+      mode_log_probs, token_lp, weight.to(log_probs.dtype),
       valid_tokens.to(log_probs.dtype), self.hyp_loss)
 
 

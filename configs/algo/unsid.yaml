@@ -12,4 +12,4 @@ scale: 3.0  # c(alpha_t) = -scale * log(1 - alpha_t), the Dirichlet concentratio
 eps: 1e-6   # clamp on 1 - alpha_t, caps the concentration at -scale * log(eps)
 num_modes: 1  # > 1: multi-mode denoiser, M predictions and a sequence-level mode head (see modes.py)
 hyp_loss: mixture  # num_modes > 1: mixture / wta / tempered
-loss_weighting: none  # cross-entropy losses (num_modes > 1, unsid): none (all noise levels equal) / elbo (-alpha'_t / (1 - alpha_t), 1/t for log-linear)
+loss_weighting: none  # none (all noise levels equal) / elbo (-alpha'_t / (1 - alpha_t), 1/t for log-linear) / log (-alpha'_t * -log(1 - alpha_t), log(1/t) for log-linear)

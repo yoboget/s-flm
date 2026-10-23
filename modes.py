@@ -27,14 +27,21 @@ import torch.nn.functional as F
 HYP_LOSSES = ('mixture', 'wta', 'tempered')
 
 
-def mode_nll(mode_log_probs, log_probs, x0, weight, valid_tokens,
-             hyp_loss):
+def token_log_probs(log_probs, x0):
+  """(B, L, M, V) per-mode log-probs -> (B, L, M) log p_m(x0_l | xt)."""
+  M = log_probs.shape[2]
+  return log_probs.gather(
+    -1, x0[:, :, None, None].expand(-1, -1, M, 1)).squeeze(-1)
+
+
+def mode_nll(mode_log_probs, token_lp, weight, valid_tokens, hyp_loss):
   """Multi-mode loss, spread over the tokens of each sequence.
 
   Args:
     mode_log_probs: (B, M) log pi.
-    log_probs: (B, L, M, V) per-mode log p_m(x0_l | xt).
-    x0: (B, L) clean tokens.
+    token_lp: (B, L, M) per-mode per-token score of x0, the log-prob
+      log p_m(x0_l | xt) (see token_log_probs) or minus a per-token
+      NELBO.
     weight: (B, L) tokens entering the likelihood (e.g. only the masked
       ones for absorbing diffusion).
     valid_tokens: (B, L) tokens over which the loss is averaged.
@@ -42,9 +49,6 @@ def mode_nll(mode_log_probs, log_probs, x0, weight, valid_tokens,
     (B, L) per-token loss whose sum over a sequence is its loss, so that
     trainer_base._loss gives sum_b loss_b / num_tokens.
   """
-  M = log_probs.shape[2]
-  token_lp = log_probs.gather(
-    -1, x0[:, :, None, None].expand(-1, -1, M, 1)).squeeze(-1)
   seq_lp = (token_lp * weight[..., None]).sum(1)  # (B, M)
   joint_lp = mode_log_probs + seq_lp
   # Sequences without any element in the likelihood (absorbing
