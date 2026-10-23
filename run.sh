@@ -15,9 +15,9 @@
 # Resubmitting with the same difficulty resumes from the last checkpoint.
 
 DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
-NUM_MODES="${NUM_MODES:-1}"          # 1: standard single-mode denoiser
+NUM_MODES="${NUM_MODES:-32}"          # 1: standard single-mode denoiser
 HYP_LOSS="${HYP_LOSS:-mixture}"       # mixture / wta / tempered
-RUN_NAME="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
+RUN_NAME="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_elbo_${DIFFICULTY}"
 
 srun apptainer exec --nv --env WANDB_MODE=online sfm.sif \
     python -u -m main \
@@ -29,6 +29,7 @@ srun apptainer exec --nv --env WANDB_MODE=online sfm.sif \
     algo=duo-base \
     algo.num_modes="${NUM_MODES}" \
     algo.hyp_loss="${HYP_LOSS}" \
+    algo.loss_weighting=elbo \
     sampler=sid \
     sampler.hyp_selection=sample \
     noise=log-linear \

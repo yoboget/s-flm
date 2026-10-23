@@ -22,12 +22,13 @@ DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
 NUM_MODES="${NUM_MODES:-32}"          # must match the checkpoint
 HYP_LOSS="${HYP_LOSS:-mixture}"       # only used to find the training run
 TRAIN_RUN="sudoku_duo_unsid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
-CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/last.ckpt}"
+CKPT="${CKPT:-best}"                   # best (lowest val/nll) / last / e.g. 106-20000 (step checkpoint)
+CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/${CKPT}.ckpt}"
 
 SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
 HYP_SELECTION="${HYP_SELECTION:-average}"  # sample / average
 STEPS="${STEPS:-8,16,32,64,128}"      # comma-separated numbers of sampling steps
-OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${SAMPLER}_${HYP_SELECTION}}"
+OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${CKPT}/${SAMPLER}_${HYP_SELECTION}}"
 
 srun apptainer exec --nv --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
     python -u -m main \

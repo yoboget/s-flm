@@ -128,6 +128,19 @@ class TrainerBase(L.LightningModule):
                          'post_process_mode=log_probs.')
       if self.hyp_loss not in modes.HYP_LOSSES:
         raise ValueError(self.hyp_loss)
+    # Time weighting of the cross-entropy losses (multi-mode, UNSID):
+    # 'none' weights all noise levels equally, 'elbo' by
+    # -alpha'_t / (1 - alpha_t) (MDLM's ELBO weight, 1 / t with
+    # noise=log-linear).
+    self.loss_weighting = getattr(config.algo, 'loss_weighting', 'none')
+    if self.loss_weighting not in ('none', 'elbo'):
+      raise ValueError(f'Unknown loss_weighting {self.loss_weighting}. '
+                       'Available: none, elbo')
+    if (self.loss_weighting != 'none' and self.num_modes == 1
+        and config.algo.diffusion_type != 'dirichlet'):
+      raise ValueError('loss_weighting only applies to the cross-entropy '
+                       'losses (num_modes > 1 or algo=unsid); mdlm / '
+                       'duo_base with num_modes=1 train with the ELBO.')
 
   def _process_sigma(self, sigma, context=None):
     raise NotImplementedError
@@ -581,7 +594,8 @@ class Diffusion(TrainerBase):
     log_x_theta = self.forward(
       x0=x0, xt=xt, sigma=sigma, context=context)
     if self.num_modes > 1:
-      return self._mode_nll(log_x_theta, xt, x0, valid_tokens), t
+      loss = self._mode_nll(log_x_theta, xt, x0, valid_tokens)
+      return self._weight_loss(loss, alpha_t, dalpha_t), t
     utils.print_nans(log_x_theta, 'model_output')
     loss = self.nll_per_token(
       log_x_theta=log_x_theta,
@@ -592,7 +606,14 @@ class Diffusion(TrainerBase):
       low_var=train_mode and self.loss_type == 'low_var',
       context=context,
       train_mode=train_mode)
-    return loss, t
+    return self._weight_loss(loss, alpha_t, dalpha_t), t
+
+  def _weight_loss(self, loss, alpha_t, dalpha_t):
+    """algo.loss_weighting='elbo': weights the (B, L) cross-entropy
+    by -alpha'_t / (1 - alpha_t), (B, 1)."""
+    if self.loss_weighting == 'none':
+      return loss
+    return loss * (-dalpha_t / (1 - alpha_t).clamp(min=1e-6))
 
   def _mode_nll(self, output, xt, x0, valid_tokens):
     """Multi-mode loss (see modes.py): cross-entropy of the mixture,
