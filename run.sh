@@ -15,7 +15,7 @@
 # Resubmitting with the same difficulty resumes from the last checkpoint.
 
 DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
-NUM_MODES="${NUM_MODES:-32}"          # 1: standard single-mode denoiser
+NUM_MODES="${NUM_MODES:-1}"          # 1: standard single-mode denoiser
 HYP_LOSS="${HYP_LOSS:-mixture}"       # mixture / wta / tempered
 RUN_NAME="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_log_${DIFFICULTY}"
 
