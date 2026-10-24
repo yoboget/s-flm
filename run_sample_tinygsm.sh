@@ -2,10 +2,10 @@
 #SBATCH --job-name tinygsm-duo-sid
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
-#SBATCH --gres=gpu:nvidia_rtx_a6000:1
+#SBATCH --gres=gpu:nvidia_rtx_a5000:1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
-#SBATCH --partition private-kalousis-gpu,private-cui-gpu
+#SBATCH --partition private-kalousis-gpu,private-cui-gpu,public-gpu,shared-gpu
 
 #SBATCH --time 04:00:00
 
