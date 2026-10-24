@@ -25,7 +25,7 @@ CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/tinygsm/duo.ckpt}"
 GSM8K_PATH="${GSM8K_PATH:-${PWD}/data/gsm8k_test.json}"
 SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
 STEPS="${STEPS:-32}"                  # number of sampling steps
-BATCH_SIZE="${BATCH_SIZE:-32}"
+BATCH_SIZE="${BATCH_SIZE:-16}"
 NOISE="${NOISE:-log-linear}"          # log-linear / cosine-squared
 OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/tinygsm/duo_${SAMPLER}_${NOISE}_steps${STEPS}}"
 
