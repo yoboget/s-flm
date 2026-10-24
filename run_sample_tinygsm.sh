@@ -17,9 +17,12 @@
 # Override e.g. with `STEPS=64 SAMPLER=ancestral sh run_sample_tinygsm.sh`.
 # Download the checkpoint first (see README):
 #   huggingface-cli download jdeschena/s-flm tinygsm/duo.ckpt --local-dir ./checkpoints
+# and build the GSM8K test file once (needs internet):
+#   apptainer exec sfm.sif python scripts/prepare_gsm8k_test.py data/gsm8k_test.json
 # Results: ${OUTPUT_DIR} (GSM8K accuracy in the log and the generated answers).
 
 CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/tinygsm/duo.ckpt}"
+GSM8K_PATH="${GSM8K_PATH:-${PWD}/data/gsm8k_test.json}"
 SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
 STEPS="${STEPS:-32}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-32}"
@@ -33,6 +36,7 @@ apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_L
     data=gsm8k-test \
     data.tokenizer_name_or_path=HuggingFaceTB/SmolLM-135M \
     data.cache_dir="${PWD}/data_cache" \
+    data.data_path="${GSM8K_PATH}" \
     model=small \
     model.length=512 \
     algo=duo-base \
