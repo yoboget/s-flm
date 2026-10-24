@@ -9,7 +9,7 @@
 # and ${OUTPUT_DIR}/steps_<n>/results.json (+ every generated grid).
 
 DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
-NUM_MODES="${NUM_MODES:-32}"          # must match the checkpoint
+NUM_MODES="${NUM_MODES:-1}"          # must match the checkpoint
 HYP_LOSS="${HYP_LOSS:-mixture}"       # only used to find the training run
 TRAIN_RUN="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
 CKPT="${CKPT:-best}"                   # best (lowest val/nll) / last / e.g. 106-20000 (step checkpoint)
@@ -19,7 +19,7 @@ SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
 HYP_SELECTION="${HYP_SELECTION:-sample}"  # sample / average
 STEPS="${STEPS:-8, 16, 32, 64, 128}"      # comma-separated numbers of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-256}"       # lower it if the GPU runs out of memory
-OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${CKPT}/${SAMPLER}_elbo_${HYP_SELECTION}}"
+OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${CKPT}/${SAMPLER}_${HYP_SELECTION}}"
 
 apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
     python -u -m main \
@@ -29,7 +29,7 @@ apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_L
     data.cache_dir="${PWD}/data_cache" \
     data.difficulty="${DIFFICULTY}" \
     model=tiny \
-    algo=unsid \
+    algo=duo-base \
     algo.num_modes="${NUM_MODES}" \
     algo.hyp_loss="${HYP_LOSS}" \
     sampler="${SAMPLER}" \
