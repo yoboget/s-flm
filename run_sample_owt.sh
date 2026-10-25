@@ -21,8 +21,8 @@
 # Results: ${OUTPUT_DIR}/samples.json (texts, gen. perplexity, entropy); the metrics are also in the log.
 
 CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
-SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
-STEPS="${STEPS:-1024}"                  # number of sampling steps
+SAMPLER="${SAMPLER:-dfm}"             # sid / dfm / ancestral
+STEPS="${STEPS:-128}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_BATCHES="${NUM_BATCHES:-4}"       # total samples = NUM_BATCHES * BATCH_SIZE
 NOISE="${NOISE:-log-linear}"          # log-linear / cosine-squared
