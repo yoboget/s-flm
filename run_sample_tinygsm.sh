@@ -7,7 +7,7 @@
 #SBATCH --mem=32000
 #SBATCH --partition private-kalousis-gpu,private-cui-gpu,public-gpu,shared-gpu
 
-#SBATCH --time 04:00:00
+#SBATCH --time 06:00:00
 
 # Evaluate the pretrained TinyGSM DUO (single mode) on the GSM8K test set with the sid sampler,
 # inside the apptainer image. Same setup as scripts/sample/tinygsm/duo.sh, with sampler=sid.
