@@ -14,7 +14,7 @@ NUM_MODES="${NUM_MODES:-1}"           # must match the checkpoint
 HYP_LOSS="${HYP_LOSS:-mixture}"       # only used to find the training run
 LOSS_WEIGHTING="${LOSS_WEIGHTING:-none}"  # only used to find the training run
 NOISE="${NOISE:-log-linear}"          # must match the training
-TRAIN_RUN="${TRAIN_RUN:-sudoku_uncond_${ALGO}_M${NUM_MODES}_${HYP_LOSS}_${LOSS_WEIGHTING}}"
+TRAIN_RUN="${TRAIN_RUN:-sudoku_uncond_${ALGO}_M${NUM_MODES}_${HYP_LOSS}_${LOSS_WEIGHTING}}2"
 CKPT="${CKPT:-best}"                   # best (lowest val/nll) / last / e.g. 106-20000 (step checkpoint)
 CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/${CKPT}.ckpt}"
 
