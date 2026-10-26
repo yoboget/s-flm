@@ -21,7 +21,7 @@
 # Results: ${OUTPUT_DIR}/samples.json (texts, gen. perplexity, entropy); the metrics are also in the log.
 
 CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
-SAMPLER="${SAMPLER:-dfm}"             # sid / dfm / ancestral
+SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
 STEPS="${STEPS:-128}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_BATCHES="${NUM_BATCHES:-4}"       # total samples = NUM_BATCHES * BATCH_SIZE
@@ -41,6 +41,7 @@ apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_L
     sampler="${SAMPLER}" \
     sampler.steps="${STEPS}" \
     sampler.num_sample_batches="${NUM_BATCHES}" \
+    sampler.temperature=0.7 \
     noise="${NOISE}" \
     loader.eval_batch_size="${BATCH_SIZE}" \
     loader.num_workers=4 \
