@@ -49,6 +49,7 @@ srun apptainer exec --nv --env WANDB_MODE=online sfm.sif \
     trainer.limit_val_batches=1.0 \
     trainer.max_steps=40_000 \
     callbacks.checkpoint_every_n_steps.every_n_train_steps=1_000 \
+    callbacks.checkpoint_every_n_steps.save_top_k=0 \
     wandb.project=s-flm \
     +wandb.name="${RUN_NAME}" \
     hydra.run.dir="${PWD}/outputs/sudoku/${RUN_NAME}"
