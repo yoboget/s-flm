@@ -17,7 +17,8 @@
 DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
 NUM_MODES="${NUM_MODES:-32}"          # 1: standard single-mode denoiser
 HYP_LOSS="${HYP_LOSS:-mixture}"       # mixture / wta / tempered
-RUN_NAME="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_elbo2_${DIFFICULTY}"
+LOSS_WEIGHTING="${LOSS_WEIGHTING:-none}"  # none (cross-entropy of x0) / elbo (DUO ELBO)
+RUN_NAME="${RUN_NAME:-sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${LOSS_WEIGHTING}_${DIFFICULTY}}"
 
 srun apptainer exec --nv --env WANDB_MODE=online sfm.sif \
     python -u -m main \
@@ -29,7 +30,7 @@ srun apptainer exec --nv --env WANDB_MODE=online sfm.sif \
     algo=duo-base \
     algo.num_modes="${NUM_MODES}" \
     algo.hyp_loss="${HYP_LOSS}" \
-    algo.loss_weighting=elbo \
+    algo.loss_weighting="${LOSS_WEIGHTING}" \
     sampler=sid \
     sampler.hyp_selection=sample \
     noise=log-linear \

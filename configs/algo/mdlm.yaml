@@ -11,4 +11,4 @@ post_process_mode: log_probs  # log_probs / logits (sampling-only for logits)
 adaLN: True
 num_modes: 1  # > 1: multi-mode denoiser, M predictions and a sequence-level mode head (see modes.py)
 hyp_loss: mixture  # num_modes > 1: mixture / wta / tempered
-loss_weighting: none  # none (cross-entropy of each mode) / elbo (ELBO of each mode), num_modes > 1 only
+loss_weighting: elbo  # elbo (ELBO) / none (cross-entropy of x0); with num_modes > 1, of each mode

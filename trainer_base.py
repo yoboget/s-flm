@@ -129,15 +129,18 @@ class TrainerBase(L.LightningModule):
       if self.hyp_loss not in modes.HYP_LOSSES:
         raise ValueError(self.hyp_loss)
     # Weighting of the noise levels in the cross-entropy losses:
-    #  mdlm / duo_base, num_modes > 1: 'none' scores each mode by the
-    #    cross-entropy of x0, 'elbo' by its ELBO (nll_per_token of the
-    #    algorithm). With num_modes = 1 they always train with the ELBO.
+    #  mdlm / duo_base: 'none' trains on the cross-entropy of x0 (for
+    #    mdlm, on the masked tokens only), 'elbo' on the ELBO
+    #    (nll_per_token of the algorithm); with num_modes > 1, each mode
+    #    is scored by it. The configs default to 'elbo'.
     #  unsid: 'none' weights all noise levels equally, 'elbo' by
     #    -alpha'_t / (1 - alpha_t) (MDLM's ELBO weight, 1 / t with
     #    noise=log-linear), 'log' by -alpha'_t * -log(1 - alpha_t)
     #    (log(1 / t) with noise=log-linear, close to the profile of
     #    DUO's ELBO).
-    self.loss_weighting = getattr(config.algo, 'loss_weighting', 'none')
+    self.loss_weighting = getattr(
+      config.algo, 'loss_weighting',
+      'none' if config.algo.diffusion_type == 'dirichlet' else 'elbo')
     allowed = (('none', 'elbo', 'log')
                if config.algo.diffusion_type == 'dirichlet'
                else ('none', 'elbo'))
@@ -604,6 +607,9 @@ class Diffusion(TrainerBase):
                             valid_tokens, low_var)
       return self._weight_loss(loss, alpha_t, dalpha_t), t
     utils.print_nans(log_x_theta, 'model_output')
+    if (self.loss_weighting == 'none'
+        and self.diffusion_type != 'dirichlet'):
+      return self._cross_entropy(log_x_theta, xt, x0), t
     loss = self.nll_per_token(
       log_x_theta=log_x_theta,
       xt=xt,
@@ -614,6 +620,15 @@ class Diffusion(TrainerBase):
       context=context,
       train_mode=train_mode)
     return self._weight_loss(loss, alpha_t, dalpha_t), t
+
+  def _cross_entropy(self, log_x_theta, xt, x0):
+    """loss_weighting='none', num_modes = 1 (mdlm / duo_base): (B, L)
+    cross-entropy of x0, on the masked tokens only for absorbing
+    diffusion (the others are copied from xt)."""
+    loss = -log_x_theta.gather(-1, x0[..., None]).squeeze(-1)
+    if self.diffusion_type == 'absorbing':
+      loss = loss * (xt == self.mask_index).to(loss.dtype)
+    return loss
 
   def _weight_loss(self, loss, alpha_t, dalpha_t):
     """algo=unsid: weights the (B, L) cross-entropy by the
