@@ -21,7 +21,7 @@ ALGO="${ALGO:-duo-base}"              # duo-base / mdlm / unsid
 NUM_MODES="${NUM_MODES:-1}"           # 1: standard single-mode denoiser
 HYP_LOSS="${HYP_LOSS:-mixture}"       # mixture / wta / tempered (NUM_MODES > 1)
 LOSS_WEIGHTING="${LOSS_WEIGHTING:-none}"  # none / elbo (NUM_MODES > 1 for duo-base / mdlm) / log (unsid)
-NOISE="${NOISE:-log-linear}"          # log-linear / cosine-squared
+NOISE="${NOISE:-cosine-squared}"          # log-linear / cosine-squared
 RUN_NAME="${RUN_NAME:-sudoku_uncond_${ALGO}_M${NUM_MODES}_${HYP_LOSS}_${LOSS_WEIGHTING}}"
 
 srun apptainer exec --nv --env WANDB_MODE=online sfm.sif \
