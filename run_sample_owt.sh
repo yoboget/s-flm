@@ -22,7 +22,7 @@
 # entropy of xt and of x0 ~ p(x0 | xt) every ENTROPY_EVERY of the steps); the metrics are also in the log.
 
 CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
-SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
+SAMPLER="${SAMPLER:-ancestral}"             # sid / dfm / ancestral
 STEPS="${STEPS:-128}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_BATCHES="${NUM_BATCHES:-4}"       # total samples = NUM_BATCHES * BATCH_SIZE
