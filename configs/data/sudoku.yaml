@@ -7,6 +7,7 @@ streaming: False
 insert_train_eos: False
 insert_valid_eos: False
 difficulty: easy  # easy (40 clues) / medium (35 clues) / hard (30 clues)
+unconditional: False  # True: [BOS] solution only (model.length=90), generate complete grids from scratch
 num_train: 48000
 num_valid: 2000
 data_seed: 42

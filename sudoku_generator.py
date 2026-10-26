@@ -158,12 +158,16 @@ def _generate_raw_grids(num_needed, num_clues, seed,
   return all_puzzles, all_solutions
 
 
-def _tokenize_grids(puzzles, solutions, tokenizer):
+def _tokenize_grids(puzzles, solutions, tokenizer,
+                    unconditional=False):
   """Convert raw 9x9 grids into tokenized training examples.
 
   Each grid is flattened with row separators, then combined as:
     input_ids:      [BOS] puzzle(89) [BOS] solution(89)
     attention_mask: [0 ...... prompt ...... 0] [1 .. solution .. 1]
+  or, if unconditional (the puzzles are unused):
+    input_ids:      [BOS] solution(89)
+    attention_mask: [1 ........ 1]
   """
   bos = tokenizer.bos_token_id
   sep = tokenizer.row_separator_id
@@ -171,6 +175,16 @@ def _tokenize_grids(puzzles, solutions, tokenizer):
   seq_len = tokenizer.seq_len
   input_ids = []
   attention_masks = []
+  if unconditional:
+    for solution in solutions:
+      ids = [bos]
+      for i in range(9):
+        ids.extend(solution[i])
+        if i < 8:
+          ids.append(sep)
+      input_ids.append(ids)
+      attention_masks.append([1] * len(ids))
+    return {'input_ids': input_ids, 'attention_mask': attention_masks}
   for puzzle, solution in zip(puzzles, solutions):
     ids = [bos]
     for grid in (puzzle, solution):
@@ -187,7 +201,8 @@ def _tokenize_grids(puzzles, solutions, tokenizer):
 
 
 def generate_sudoku_dataset(num_train, num_valid, difficulty,
-                            seed, tokenizer, num_workers=1):
+                            seed, tokenizer, num_workers=1,
+                            unconditional=False):
   """Generate a deduplicated sudoku dataset.
 
   Args:
@@ -198,16 +213,22 @@ def generate_sudoku_dataset(num_train, num_valid, difficulty,
     tokenizer: SudokuTokenizer instance (single source of truth
       for token ids and sequence layout).
     num_workers: Number of parallel workers.
+    unconditional: complete grids only ([BOS] solution), no cell
+      is removed (difficulty is unused). The grids are the same as
+      the solutions of the conditional datasets with the same seed.
 
   Returns:
     dict with 'train' and 'validation' keys, each mapping to
     a dict with 'input_ids' and 'attention_mask' lists.
   """
-  if difficulty not in DIFFICULTY_TO_CLUES:
+  if unconditional:
+    num_clues = 81  # skips the (slow) cell removal
+  elif difficulty not in DIFFICULTY_TO_CLUES:
     raise ValueError(
       f'Invalid difficulty: {difficulty!r}. '
       f'Must be one of {list(DIFFICULTY_TO_CLUES.keys())}.')
-  num_clues = DIFFICULTY_TO_CLUES[difficulty]
+  else:
+    num_clues = DIFFICULTY_TO_CLUES[difficulty]
 
   total_needed = num_train + num_valid
   all_puzzles, all_solutions = _generate_raw_grids(
@@ -222,8 +243,8 @@ def generate_sudoku_dataset(num_train, num_valid, difficulty,
 
   train = _tokenize_grids(
     all_puzzles[:num_train], all_solutions[:num_train],
-    tokenizer)
+    tokenizer, unconditional)
   valid = _tokenize_grids(
     all_puzzles[num_train:], all_solutions[num_train:],
-    tokenizer)
+    tokenizer, unconditional)
   return {'train': train, 'validation': valid}

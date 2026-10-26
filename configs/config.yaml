@@ -16,6 +16,7 @@ sudoku:
   output_dir: ${cwd:}/sudoku_eval
   batch_size: 64
   steps_list: null  # e.g. [8, 16, 32, 180]: evaluate each number of sampling steps in one launch (null: sampler.steps)
+  num_samples: 1024  # data.unconditional=True: number of grids generated for each number of steps
 
 gsm8k:
   input_file: null  # if set, skip sampling and evaluate directly from this JSON file
@@ -67,7 +68,7 @@ eval:
   generate_samples: True
   generated_samples_path: ${cwd:}/samples.json
   results_json_path: null
-  entropy_every: null  # sample_eval: e.g. 0.1, entropy of xt and of x0 ~ p(x0 | xt) every 10% of the steps (ancestral / sid / dfm)
+  entropy_every: null  # sample_eval / unconditional sudoku_eval: e.g. 0.1, entropy of xt and of x0 ~ p(x0 | xt) every 10% of the steps (ancestral / sid / dfm)
 
 optim:
   weight_decay: 0

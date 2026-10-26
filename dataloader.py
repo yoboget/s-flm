@@ -284,6 +284,7 @@ class SudokuTokenizer:
     seq_len        - 89 (one grid: 81 cells + 8 separators)
     total_seq_len  - 180 ([BOS] puzzle [BOS] solution)
     prompt_len     - 91 ([BOS] + puzzle)
+    uncond_seq_len - 90 ([BOS] solution, data.unconditional=True)
   """
 
   def __init__(self):
@@ -302,6 +303,7 @@ class SudokuTokenizer:
     self.seq_len = self.num_cells + self.num_separators
     self.prompt_len = 1 + self.seq_len + 1
     self.total_seq_len = 2 * self.seq_len + 2
+    self.uncond_seq_len = 1 + self.seq_len
 
     self._id_to_str = {
       0: '_', 1: '1', 2: '2', 3: '3', 4: '4',
@@ -326,6 +328,9 @@ def get_sudoku_dataset(config, tokenizer):
   Each example is: [BOS] partial_grid(89) [BOS] solution(89) = 180 tokens.
   attention_mask is 0 for the prompt (partial grid) and 1 for the
   solution, so training only happens on the solution part.
+  With data.unconditional=True, each example is [BOS] solution(89)
+  = 90 tokens (model.length=90), trained on all the tokens, to
+  generate complete grids from scratch (data.difficulty is unused).
   """
   assert isinstance(tokenizer, SudokuTokenizer), (
     f'Sudoku dataset requires SudokuTokenizer, '
@@ -335,10 +340,11 @@ def get_sudoku_dataset(config, tokenizer):
   num_valid = config.data.num_valid
   data_seed = config.data.data_seed
   num_workers = config.data.sudoku_num_workers
+  unconditional = config.data.get('unconditional', False)
 
   save_dir = (f'{config.data.cache_dir}/sudoku'
-              f'_{difficulty}_train{num_train}'
-              f'_valid{num_valid}_seed{data_seed}')
+              f'_{"uncond" if unconditional else difficulty}'
+              f'_train{num_train}_valid{num_valid}_seed{data_seed}')
   split_names = ['train', 'validation']
   if not all([
     utils.fsspec_exists(os.path.join(save_dir, split))
@@ -346,6 +352,7 @@ def get_sudoku_dataset(config, tokenizer):
   ]):
     LOGGER.info(
       f'Generating sudoku dataset: difficulty={difficulty}, '
+      f'unconditional={unconditional}, '
       f'num_train={num_train}, num_valid={num_valid}, '
       f'seed={data_seed}.')
     raw = sudoku_generator.generate_sudoku_dataset(
@@ -354,7 +361,8 @@ def get_sudoku_dataset(config, tokenizer):
       difficulty=difficulty,
       seed=data_seed,
       tokenizer=tokenizer,
-      num_workers=num_workers)
+      num_workers=num_workers,
+      unconditional=unconditional)
     dataset = datasets.DatasetDict({
       'train': datasets.Dataset.from_dict({
         'input_ids': raw['train']['input_ids'],

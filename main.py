@@ -125,8 +125,11 @@ class _EntropyTrajectory:
   For MDLM, xt_entropy is over the unmasked tokens only; for UNSID,
   xt is the argmax of the simplex point."""
 
-  def __init__(self, model, every):
-    self.every = every
+  def __init__(self, model, config):
+    if config.sampler.predictor not in ('ancestral', 'sid', 'dfm'):
+      raise ValueError('eval.entropy_every needs sampler=ancestral, '
+                       f'sid or dfm, got {config.sampler.predictor}')
+    self.every = config.eval.entropy_every
     self.mask_index = (model.mask_index
                        if model.diffusion_type == 'absorbing'
                        else None)
@@ -207,11 +210,7 @@ def _generate_samples(diffusion_model, config, logger,
 
   entropy_trajectory = None
   if config.eval.get('entropy_every') is not None:
-    if config.sampler.predictor not in ('ancestral', 'sid', 'dfm'):
-      raise ValueError('eval.entropy_every needs sampler=ancestral, '
-                       f'sid or dfm, got {config.sampler.predictor}')
-    entropy_trajectory = _EntropyTrajectory(
-      model, config.eval.entropy_every)
+    entropy_trajectory = _EntropyTrajectory(model, config)
 
   model.to(fabric.device)
   if fabric.global_rank == 0:
@@ -599,9 +598,19 @@ def _sudoku_eval(diffusion_model, config, logger, tokenizer):
     model.ema = None
   model._eval_mode()
 
+  unconditional = config.data.get('unconditional', False)
+  if unconditional and model.num_tokens != tokenizer.uncond_seq_len:
+    raise ValueError(
+      'data.unconditional=True needs model.length='
+      f'{tokenizer.uncond_seq_len}, got {model.num_tokens}')
+
   with fabric.rank_zero_first():
+    # Unconditional: the training grids, to measure memorization
     dataset = dataloader.get_dataset(
-      config, tokenizer, mode='valid')
+      config, tokenizer,
+      mode='train' if unconditional else 'valid')
+  if unconditional:
+    train_grids = {tuple(ids.tolist()) for ids in dataset['input_ids']}
 
   # Evaluate every number of sampling steps in sudoku.steps_list
   # (default: sampler.steps), each in its own subdirectory.
@@ -614,9 +623,14 @@ def _sudoku_eval(diffusion_model, config, logger, tokenizer):
     L.seed_everything(seed)
     output_dir = os.path.join(
       config.sudoku.output_dir, f'steps_{num_steps}')
-    results = _sudoku_eval_steps(
-      model, dataset, tokenizer, fabric, config, logger,
-      num_steps, output_dir)
+    if unconditional:
+      results = _sudoku_uncond_eval_steps(
+        model, train_grids, tokenizer, fabric, config, logger,
+        num_steps, output_dir)
+    else:
+      results = _sudoku_eval_steps(
+        model, dataset, tokenizer, fabric, config, logger,
+        num_steps, output_dir)
     if results is not None:
       summary[num_steps] = {k: v for k, v in results.items()
                             if k != 'records'}
@@ -626,6 +640,16 @@ def _sudoku_eval(diffusion_model, config, logger, tokenizer):
       config.sudoku.output_dir, 'summary.json')
     with open(summary_path, 'w') as f:
       json.dump(summary, f, indent=2)
+    if unconditional:
+      logger.info('Unconditional sudoku summary (steps: valid grids '
+                  '/ valid units / entropy):')
+      for num_steps, r in summary.items():
+        logger.info(
+          f'  {num_steps:>5}: {r["valid_rate"] * 100:6.2f}% / '
+          f'{r["valid_unit_rate"] * 100:6.2f}% / '
+          f'{r["entropy"]:.3f}')
+      logger.info(f'Summary saved to {summary_path}')
+      return
     logger.info('Sudoku summary (steps: accuracy / cell / blank cell):')
     for num_steps, r in summary.items():
       logger.info(
@@ -731,6 +755,150 @@ def _sudoku_eval_steps(model, dataset, tokenizer, fabric, config,
       'num_total': total,
       'records': all_records,
     }
+    with open(merged_path, 'w') as f:
+      json.dump(results, f, indent=2)
+    logger.info(f'Results saved to {merged_path}')
+
+  fabric.barrier()
+  return results
+
+
+def _check_sudoku_grid(ids, tokenizer):
+  """Checks a generated [BOS] grid(89) sequence. Returns well_formed
+  (BOS and row separators in place, a digit in every cell), valid
+  (well formed and every row, column and box holds the 9 digits),
+  num_valid_units (out of the 27 rows, columns and boxes) and
+  num_conflicts (sum over the units of 9 - number of distinct
+  digits, 0 for a valid grid)."""
+  grid = ids[1:]
+  rows = [grid[10 * i:10 * i + 9] for i in range(9)]
+  separators = [grid[10 * i + 9] for i in range(8)]
+  layout_ok = (ids[0] == tokenizer.bos_token_id
+               and all(s == tokenizer.row_separator_id
+                       for s in separators))
+  digits_ok = all(1 <= c <= 9 for row in rows for c in row)
+  columns = [[row[c] for row in rows] for c in range(9)]
+  boxes = [[rows[r + i][c + j] for i in range(3) for j in range(3)]
+           for r in (0, 3, 6) for c in (0, 3, 6)]
+  distinct = [len({c for c in unit if 1 <= c <= 9})
+              for unit in rows + columns + boxes]
+  num_valid_units = sum(d == 9 for d in distinct)
+  well_formed = layout_ok and digits_ok
+  return {
+    'well_formed': well_formed,
+    'valid': well_formed and num_valid_units == 27,
+    'num_valid_units': num_valid_units,
+    'num_conflicts': sum(9 - d for d in distinct),
+  }
+
+
+def _sudoku_uncond_eval_steps(model, train_grids, tokenizer, fabric,
+                              config, logger, num_steps, output_dir):
+  """data.unconditional=True: generates sudoku.num_samples complete
+  grids from scratch with `num_steps` sampling steps.
+
+  Reports the rate of valid grids, of valid units (rows, columns and
+  boxes holding the 9 digits), the mean number of conflicts, the
+  number of distinct valid grids, the rate of valid grids copied from
+  the training set, and the token entropy of the samples, to compare
+  with reference_entropy (the same for every valid grid). With
+  eval.entropy_every, also the entropy trajectory during sampling.
+  Returns the merged results on rank 0, None on the other ranks.
+  """
+  rank = fabric.global_rank
+  world_size = fabric.world_size
+  local_num = len(range(rank, config.sudoku.num_samples, world_size))
+  batch_size = config.sudoku.batch_size
+  trajectory = None
+  if config.eval.get('entropy_every') is not None:
+    trajectory = _EntropyTrajectory(model, config)
+  records = []
+
+  for batch_start in trange(
+      0, local_num, batch_size,
+      desc=f'Unconditional sudoku ({num_steps} steps)',
+      disable=rank != 0):
+    B = min(batch_size, local_num - batch_start)
+    samples, _ = model.generate_samples(
+      num_samples=B, num_steps=num_steps, on_step=trajectory)
+    samples = samples.cpu()
+    for i in range(B):
+      ids = samples[i].tolist()
+      records.append({
+        'generated': tokenizer.decode(ids[1:]),
+        'entropy': _token_entropy(samples[i:i + 1]),
+        'in_train': tuple(ids) in train_grids,
+        **_check_sudoku_grid(ids, tokenizer),
+      })
+    del samples
+    gc.collect()
+
+  # Save per-rank results and aggregate on rank 0
+  os.makedirs(output_dir, exist_ok=True)
+  rank_path = os.path.join(output_dir, f'rank_{rank:04d}.json')
+  with open(rank_path, 'w') as f:
+    json.dump({'records': records,
+               'entropy_trajectory': (None if trajectory is None
+                                      else trajectory.summary())},
+              f, indent=2)
+
+  fabric.barrier()
+
+  results = None
+  if rank == 0:
+    all_records = []
+    trajectories = []
+    for r in range(world_size):
+      path = os.path.join(output_dir, f'rank_{r:04d}.json')
+      with open(path) as f:
+        rank_results = json.load(f)
+      all_records.extend(rank_results['records'])
+      if rank_results['entropy_trajectory'] is not None:
+        trajectories.append(rank_results['entropy_trajectory'])
+    total = len(all_records)
+    valid = [r for r in all_records if r['valid']]
+    results = {
+      'num_steps': num_steps,
+      'num_samples': total,
+      'valid_rate': len(valid) / total,
+      'well_formed_rate': sum(
+        r['well_formed'] for r in all_records) / total,
+      'valid_unit_rate': sum(
+        r['num_valid_units'] for r in all_records) / (27 * total),
+      'mean_conflicts': sum(
+        r['num_conflicts'] for r in all_records) / total,
+      'num_distinct_valid': len({r['generated'] for r in valid}),
+      'memorized_rate': (sum(r['in_train'] for r in valid)
+                         / max(len(valid), 1)),
+      'entropy': sum(r['entropy'] for r in all_records) / total,
+      'reference_entropy': _token_entropy(
+        torch.tensor([next(iter(train_grids))])),
+    }
+    if trajectories:
+      # Average over the ranks, entry by entry (same steps)
+      results['entropy_trajectory'] = [
+        {k: (v if k in ('step', 'frac', 't') or v is None
+             else sum(t[j][k] for t in trajectories) / len(trajectories))
+         for k, v in entry.items()}
+        for j, entry in enumerate(trajectories[0])]
+    logger.info(
+      f'Unconditional sudoku ({num_steps} steps): '
+      f'{len(valid)}/{total} valid grids '
+      f'({results["valid_rate"] * 100:.2f}%), valid units '
+      f'{results["valid_unit_rate"] * 100:.2f}%, mean conflicts '
+      f'{results["mean_conflicts"]:.2f}, distinct valid '
+      f'{results["num_distinct_valid"]}, memorized '
+      f'{results["memorized_rate"] * 100:.2f}%, entropy '
+      f'{results["entropy"]:.3f} (valid grid: '
+      f'{results["reference_entropy"]:.3f})')
+    for e in results.get('entropy_trajectory', []):
+      logger.info(
+        f"  entropy at step {e['step']} (t={e['t']:.3f}): "
+        f"xt {e['xt_entropy']:.3f}, x0 "
+        + ('-' if e['x0_entropy'] is None
+           else f"{e['x0_entropy']:.3f}"))
+    results['records'] = all_records
+    merged_path = os.path.join(output_dir, 'results.json')
     with open(merged_path, 'w') as f:
       json.dump(results, f, indent=2)
     logger.info(f'Results saved to {merged_path}')
