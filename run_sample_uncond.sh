@@ -9,18 +9,6 @@
 
 #SBATCH --time 04:00:00
 
-# Baobab: evaluate an unconditional sudoku model trained with run_uncond.sh: generates
-# NUM_SAMPLES complete grids from scratch for every number of steps in STEPS and reports
-# the rate of valid grids, of valid rows / columns / boxes, the mean number of conflicts,
-# the number of distinct valid grids, the rate of valid grids copied from the training set,
-# the token entropy (every valid grid has the same, reference_entropy), and the entropy of
-# xt and x0 ~ p(x0 | xt) every ENTROPY_EVERY of the steps.
-# Submit from the repo root: `mkdir -p sbatch && sbatch run_sample_uncond.sh`
-# The defaults match run_uncond.sh; override e.g. with
-#   `ALGO=mdlm SAMPLER=ancestral STEPS=8,32,128 sbatch run_sample_uncond.sh`
-# Results: ${OUTPUT_DIR}/summary.json (metrics per number of steps)
-# and ${OUTPUT_DIR}/steps_<n>/results.json (+ entropy trajectory and every generated grid).
-
 ALGO="${ALGO:-duo-base}"              # duo-base / mdlm / unsid, must match the checkpoint
 NUM_MODES="${NUM_MODES:-1}"           # must match the checkpoint
 HYP_LOSS="${HYP_LOSS:-mixture}"       # only used to find the training run
