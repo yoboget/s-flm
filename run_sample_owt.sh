@@ -18,7 +18,8 @@
 # Override e.g. with `STEPS=128 SAMPLER=ancestral sh run_sample_owt.sh`.
 # Download the checkpoint first:
 #   huggingface-cli download jdeschena/s-flm owt/duo.ckpt --local-dir ./checkpoints
-# Results: ${OUTPUT_DIR}/samples.json (texts, gen. perplexity, entropy); the metrics are also in the log.
+# Results: ${OUTPUT_DIR}/samples.json (texts, gen. perplexity, entropy, and entropy_trajectory: the
+# entropy of xt and of x0 ~ p(x0 | xt) every ENTROPY_EVERY of the steps); the metrics are also in the log.
 
 CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
 SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
@@ -26,6 +27,7 @@ STEPS="${STEPS:-128}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_BATCHES="${NUM_BATCHES:-4}"       # total samples = NUM_BATCHES * BATCH_SIZE
 NOISE="${NOISE:-log-linear}"          # log-linear / cosine-squared
+ENTROPY_EVERY="${ENTROPY_EVERY:-0.1}"  # entropy of xt and x0 every 10% of the steps (null to disable)
 OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/owt/duo_${SAMPLER}_${NOISE}_steps${STEPS}}"
 
 apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
@@ -34,6 +36,7 @@ apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_L
     eval.checkpoint_path="${CKPT_PATH}" \
     eval.compute_generative_perplexity=True \
     eval.results_json_path="${OUTPUT_DIR}/samples.json" \
+    eval.entropy_every="${ENTROPY_EVERY}" \
     data=openwebtext-split \
     data.cache_dir="${PWD}/data_cache" \
     model=small \
@@ -41,7 +44,7 @@ apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_L
     sampler="${SAMPLER}" \
     sampler.steps="${STEPS}" \
     sampler.num_sample_batches="${NUM_BATCHES}" \
-    sampler.temperature=0.1 \
+    sampler.temperature=1 \
     noise="${NOISE}" \
     loader.eval_batch_size="${BATCH_SIZE}" \
     loader.num_workers=4 \

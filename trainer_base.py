@@ -455,21 +455,22 @@ class TrainerBase(L.LightningModule):
   @torch.no_grad()
   def generate_samples(self, num_samples, num_steps=None,
                        eps=1e-5, prefix_tokens=None,
-                       prefix_lengths=None):
+                       prefix_lengths=None, on_step=None):
     """Generate samples from the model."""
     return samplers.run_sampler(
       self.sampler, self, num_samples,
       num_steps=num_steps, eps=eps, prefix_tokens=prefix_tokens,
-      prefix_lengths=prefix_lengths)
+      prefix_lengths=prefix_lengths, on_step=on_step)
 
-  def restore_model_and_sample(self, num_steps, eps=1e-5):
+  def restore_model_and_sample(self, num_steps, eps=1e-5,
+                               on_step=None):
     """Generate samples from the model."""
     # Lightning auto-casting is not working in this method for some reason
     self._eval_mode()
     samples, metadata = self.generate_samples(
       num_samples=self.config.loader.eval_batch_size,
       num_steps=num_steps,
-      eps=eps)
+      eps=eps, on_step=on_step)
     self._train_mode()
     return samples, metadata
 

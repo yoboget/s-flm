@@ -67,6 +67,7 @@ eval:
   generate_samples: True
   generated_samples_path: ${cwd:}/samples.json
   results_json_path: null
+  entropy_every: null  # sample_eval: e.g. 0.1, entropy of xt and of x0 ~ p(x0 | xt) every 10% of the steps (ancestral / sid / dfm)
 
 optim:
   weight_decay: 0

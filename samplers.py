@@ -357,6 +357,9 @@ class AncestralState(BaseState):
   step_idx: int
   nfe: int
   done: bool
+  # eval.entropy_every: also draw x0 ~ p(x0 | xt) at each step
+  track_x0: bool = False
+  x0_pred: torch.Tensor = None
 
 
 @dataclass
@@ -431,6 +434,8 @@ class AncestralSampler(Sampler):
     if isinstance(output, tuple):  # multi-mode denoiser
       output = modes.select_mode(*output, self.hyp_selection)
     log_probs = _maybe_cast_log_probs(output, self.use_float64)
+    if state.track_x0:
+      state.x0_pred = _decode_direct_tokens(log_probs, greedy=False)
     return log_probs, alpha_t, alpha_s, is_last_step
 
   def _end_step(self, state, is_last_step):
@@ -1110,13 +1115,20 @@ class CANDISampler(Sampler):
 
 def run_sampler(sampler, model, num_samples, *,
                num_steps=None, eps=1e-5, prefix_tokens=None,
-               prefix_lengths=None):
+               prefix_lengths=None, on_step=None):
+  """on_step: optional callback on the state, called on the initial
+  state and after each step (ancestral / sid / dfm samplers only)."""
   state = sampler.init_state(model, num_samples,
                              num_steps=num_steps, eps=eps,
                              prefix_tokens=prefix_tokens,
                              prefix_lengths=prefix_lengths)
+  if on_step is not None:
+    state.track_x0 = True
+    on_step(state)
   while not state.done:
     state = sampler.step(model, state)
+    if on_step is not None:
+      on_step(state)
   return state.xt, sampler.metadata(state)
 
 

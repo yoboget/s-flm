@@ -100,6 +100,73 @@ def _print_batch(train_ds, valid_ds, tokenizer, k=64):
       print('Last tokens:', last)
 
 
+def _token_entropy(tokens, ignore_index=None):
+  """Entropy of the token histogram of each sequence (as in
+  metrics.record_entropy), averaged over the batch. Tokens equal to
+  ignore_index (e.g. the mask) are left out."""
+  entropies = []
+  for sample in tokens:
+    if ignore_index is not None:
+      sample = sample[sample != ignore_index]
+    if sample.numel() == 0:
+      entropies.append(0.0)
+      continue
+    _, counts = torch.unique(sample, return_counts=True)
+    entropies.append(torch.special.entr(
+      counts.float() / counts.sum()).sum().item())
+  return sum(entropies) / len(entropies)
+
+
+class _EntropyTrajectory:
+  """eval.entropy_every: sampler callback that records, every
+  `every` fraction of the sampling steps (and at the prior), the
+  entropy of the current state xt and of x0 ~ p(x0 | xt), the
+  independent draw from the denoiser at the step that produced xt.
+  For MDLM, xt_entropy is over the unmasked tokens only; for UNSID,
+  xt is the argmax of the simplex point."""
+
+  def __init__(self, model, every):
+    self.every = every
+    self.mask_index = (model.mask_index
+                       if model.diffusion_type == 'absorbing'
+                       else None)
+    self.records = {}  # step -> list of per-batch records
+
+  def __call__(self, state):
+    num_steps = len(state.timesteps) - 1
+    interval = max(1, round(self.every * num_steps))
+    step = state.step_idx
+    if step % interval != 0 and step != num_steps:
+      return
+    xt = state.xt
+    if xt.ndim == 3:
+      xt = xt.argmax(-1)
+    record = dict(
+      xt_entropy=_token_entropy(xt, self.mask_index),
+      x0_entropy=(None if step == 0
+                  else _token_entropy(state.x0_pred)))
+    if self.mask_index is not None:
+      record['mask_frac'] = (xt == self.mask_index).float().mean().item()
+    self.records.setdefault(step, []).append(record)
+    self._num_steps = num_steps
+    self._timesteps = state.timesteps
+
+  def summary(self):
+    """One entry per recorded step, averaged over the batches. t is
+    the time of the state xt after the step."""
+    out = []
+    for step in sorted(self.records):
+      recs = self.records[step]
+      entry = dict(step=step, frac=step / self._num_steps,
+                   t=(0.0 if step == self._num_steps
+                      else self._timesteps[step].item()))
+      for key in recs[0]:
+        values = [r[key] for r in recs if r[key] is not None]
+        entry[key] = sum(values) / len(values) if values else None
+      out.append(entry)
+    return out
+
+
 @torch.no_grad
 def _generate_samples(diffusion_model, config, logger,
                       tokenizer):
@@ -138,6 +205,14 @@ def _generate_samples(diffusion_model, config, logger,
     ckpt_hash=utils.short_hash(config.eval.checkpoint_path)
   ) + ".json"
 
+  entropy_trajectory = None
+  if config.eval.get('entropy_every') is not None:
+    if config.sampler.predictor not in ('ancestral', 'sid', 'dfm'):
+      raise ValueError('eval.entropy_every needs sampler=ancestral, '
+                       f'sid or dfm, got {config.sampler.predictor}')
+    entropy_trajectory = _EntropyTrajectory(
+      model, config.eval.entropy_every)
+
   model.to(fabric.device)
   if fabric.global_rank == 0:
     logger.info(f'Sampling {total_num_samples} samples.')
@@ -148,7 +223,7 @@ def _generate_samples(diffusion_model, config, logger,
                   f'({config.sampler.steps} steps)',
                   disable=fabric.global_rank != 0):
     samples, metadata = model.restore_model_and_sample(
-      num_steps=config.sampler.steps)
+      num_steps=config.sampler.steps, on_step=entropy_trajectory)
     total_nfe += metadata['nfe']
     samples = fabric.all_gather(samples)
     if fabric.world_size > 1:
@@ -198,6 +273,15 @@ def _generate_samples(diffusion_model, config, logger,
       config=omegaconf.OmegaConf.to_container(config,
                                               resolve=True),
       avg_nfe=avg_nfe)
+    if entropy_trajectory is not None:
+      # Rank 0 batches only (when sampling on several devices)
+      save_dict['entropy_trajectory'] = entropy_trajectory.summary()
+      for e in save_dict['entropy_trajectory']:
+        logger.info(
+          f"Entropy at step {e['step']} (t={e['t']:.3f}): "
+          f"xt {e['xt_entropy']:.3f}, x0 "
+          + ('-' if e['x0_entropy'] is None
+             else f"{e['x0_entropy']:.3f}"))
     with fsspec.open(samples_path, 'w') as f:
       json.dump(save_dict, f, indent=4)
     print('Samples saved at:', samples_path)
