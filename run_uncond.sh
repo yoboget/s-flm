@@ -18,7 +18,7 @@
 # in data_cache/sudoku_uncond_train48000_valid2000_seed42.
 
 ALGO="${ALGO:-duo-base}"              # duo-base / mdlm / unsid
-NUM_MODES="${NUM_MODES:-1}"           # 1: standard single-mode denoiser
+NUM_MODES="${NUM_MODES:-32}"           # 1: standard single-mode denoiser
 HYP_LOSS="${HYP_LOSS:-mixture}"       # mixture / wta / tempered (NUM_MODES > 1)
 LOSS_WEIGHTING="${LOSS_WEIGHTING:-none}"  # none / elbo (NUM_MODES > 1 for duo-base / mdlm) / log (unsid)
 NOISE="${NOISE:-log-linear}"          # log-linear / cosine-squared
