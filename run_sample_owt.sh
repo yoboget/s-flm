@@ -25,7 +25,7 @@
 CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
 SAMPLER="${SAMPLER:-ancestral_restart}"       # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral
 RHO="${RHO:-0.1}"                     # sid_partial: proportion of the positions resampled at each step
-LAM="${LAM:-0.8}"                    # ancestral_restart: proportion of the steps of the ancestral pass (restart at t = 1 - LAM)
+LAM="${LAM:-0.95}"                    # ancestral_restart: proportion of the steps of the ancestral pass (restart at t = 1 - LAM)
 STEPS="${STEPS:-128}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_BATCHES="${NUM_BATCHES:-4}"       # total samples = NUM_BATCHES * BATCH_SIZE
