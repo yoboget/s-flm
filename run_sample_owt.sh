@@ -23,8 +23,9 @@
 # entropy of xt and of x0 ~ p(x0 | xt) every ENTROPY_EVERY of the steps); the metrics are also in the log.
 
 CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
-SAMPLER="${SAMPLER:-sid_partial}"       # sid / sid_partial / ancestral_sid / dfm / ancestral
+SAMPLER="${SAMPLER:-ancestral_restart}"       # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral
 RHO="${RHO:-0.1}"                     # sid_partial: proportion of the positions resampled at each step
+LAM="${LAM:-0.8}"                    # ancestral_restart: proportion of the steps of the ancestral pass (restart at t = 1 - LAM)
 STEPS="${STEPS:-128}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_BATCHES="${NUM_BATCHES:-4}"       # total samples = NUM_BATCHES * BATCH_SIZE
@@ -32,8 +33,10 @@ NOISE="${NOISE:-log-linear}"          # log-linear / cosine-squared
 ENTROPY_EVERY="${ENTROPY_EVERY:-0.1}"  # entropy of xt and x0 every 10% of the steps (null to disable)
 SAMPLER_NAME="${SAMPLER}"
 [ "${SAMPLER}" = "sid_partial" ] && SAMPLER_NAME="${SAMPLER}_rho${RHO}"
+[ "${SAMPLER}" = "ancestral_restart" ] && SAMPLER_NAME="${SAMPLER}_lam${LAM}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/owt/duo_${SAMPLER_NAME}_${NOISE}_steps${STEPS}}"
 [ "${SAMPLER}" = "sid_partial" ] && SAMPLER_ARGS="sampler.rho=${RHO}"
+[ "${SAMPLER}" = "ancestral_restart" ] && SAMPLER_ARGS="sampler.lam=${LAM}"
 
 apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
     python -u -m main \

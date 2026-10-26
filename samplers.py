@@ -360,6 +360,9 @@ class AncestralState(BaseState):
   # eval.entropy_every: also draw x0 ~ p(x0 | xt) at each step
   track_x0: bool = False
   x0_pred: torch.Tensor = None
+  # sampler=ancestral_restart: number of ancestral steps, after which
+  # the sample is noised again and denoised with sid
+  restart_idx: int = None
 
 
 @dataclass
@@ -416,8 +419,7 @@ class AncestralSampler(Sampler):
   def _predict_x0(self, model, state):
     """Denoiser prediction log p(x0 | xt) at the current step, with the
     noise levels alpha_t and alpha_s of the step."""
-    num_steps = len(state.timesteps) - 1
-    is_last_step = (state.step_idx == num_steps - 1)
+    is_last_step = self._is_denoise_step(state)
     t = state.timesteps[state.step_idx] * state.ones
     s = state.timesteps[state.step_idx + 1] * state.ones
 
@@ -437,6 +439,10 @@ class AncestralSampler(Sampler):
     if state.track_x0:
       state.x0_pred = _decode_direct_tokens(log_probs, greedy=False)
     return log_probs, alpha_t, alpha_s, is_last_step
+
+  def _is_denoise_step(self, state):
+    """Whether the current step goes to the data (alpha_s = 1)."""
+    return state.step_idx == len(state.timesteps) - 2
 
   def _end_step(self, state, is_last_step):
     self._project_prefix(state.xt, state.prefix_tokens, 
@@ -574,6 +580,63 @@ class DirichletSIDSampler(AncestralSampler):
     else:
       state.xt = model.q_xt(x0, alpha_s, use_pure_noise=False)
 
+    return self._end_step(state, is_last_step)
+
+
+class AncestralRestartSampler(SIDSampler):
+  """Ancestral denoising followed by a sid refinement. Of the N steps,
+  round(lam * N) denoise completely with the ancestral sampler, from
+  t = 1 to the data; the sample is then noised again to t = 1 - lam,
+  x ~ q(x_{1 - lam} | x0), and denoised with sid in the remaining
+  steps. lam = 1 is ancestral; lam = 0 is sid.
+  state.timesteps[i] is the time of the state before step i (the
+  restart time 1 - lam for i = restart_idx)."""
+
+  def __init__(self, lam=0.75, **kwargs):
+    super().__init__(**kwargs)
+    assert 0 <= lam <= 1
+    self.lam = lam
+
+  def init_state(self, model, num_samples, *, num_steps=None,
+                 eps=1e-5, **kwargs):
+    state = super().init_state(model, num_samples,
+                               num_steps=num_steps, eps=eps, **kwargs)
+    num_steps = len(state.timesteps) - 1
+    n_ancestral = int(round(self.lam * num_steps))
+    n_sid = num_steps - n_ancestral
+    if 0 < n_ancestral and 0 < n_sid:
+      device = state.timesteps.device
+      state.timesteps = torch.cat([
+        torch.linspace(1, eps, n_ancestral + 1, device=device)[:-1],
+        torch.linspace(1 - self.lam, eps, n_sid + 1, device=device)])
+    state.restart_idx = n_ancestral
+    return state
+
+  def _is_denoise_step(self, state):
+    return (state.step_idx == state.restart_idx - 1
+            or super()._is_denoise_step(state))
+
+  def step(self, model, state):
+    log_probs, alpha_t, alpha_s, is_last_step = self._predict_x0(
+      model, state)
+
+    current_tokens = state.xt[:, state.start_idx:]
+    log_probs_window = log_probs[:, state.start_idx:]
+    if state.step_idx < state.restart_idx:
+      x = _decode_ancestral_update(
+        self, model, log_probs_window, current_tokens,
+        alpha_s, alpha_t, is_last_step=is_last_step)
+      if state.step_idx == state.restart_idx - 1 and not (
+          state.step_idx == len(state.timesteps) - 2):
+        restart = state.timesteps[state.restart_idx] * state.ones
+        _, alpha_restart = model.noise(restart)
+        x = model.q_xt(x, alpha_restart, use_pure_noise=False)
+      current_tokens[:] = x
+    else:
+      current_tokens[:] = self._sid_update(
+        model, log_probs_window, alpha_s, is_last_step)
+
+    is_last_step = state.step_idx == len(state.timesteps) - 2
     return self._end_step(state, is_last_step)
 
 
@@ -1203,7 +1266,7 @@ def run_sampler(sampler, model, num_samples, *,
 
 # Samplers built on AncestralSampler (support eval.entropy_every)
 ANCESTRAL_PREDICTORS = ('ancestral', 'sid', 'sid_partial',
-                        'ancestral_sid', 'dfm')
+                        'ancestral_sid', 'ancestral_restart', 'dfm')
 
 
 def get_sampler(config):
@@ -1225,10 +1288,13 @@ def get_sampler(config):
                    'sid': SIDSampler,
                    'sid_partial': PartialSIDSampler,
                    'ancestral_sid': AncestralSIDSampler,
+                   'ancestral_restart': AncestralRestartSampler,
                    'dfm': DFMSampler}[s.predictor]
     kwargs = {}
     if s.predictor == 'sid_partial':
       kwargs['rho'] = s.rho
+    if s.predictor == 'ancestral_restart':
+      kwargs['lam'] = s.lam
     return sampler_cls(
       use_float64=s.use_float64,
       noise_removal=s.noise_removal,

@@ -18,16 +18,19 @@ TRAIN_RUN="${TRAIN_RUN:-sudoku_uncond_${ALGO}_M${NUM_MODES}_${HYP_LOSS}_${LOSS_W
 CKPT="${CKPT:-best}"                   # best (lowest val/nll) / last / e.g. 106-20000 (step checkpoint)
 CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/${CKPT}.ckpt}"
 
-SAMPLER="${SAMPLER:-sid}"             # sid / sid_partial / ancestral_sid / dfm / ancestral (unsid: sid only)
+SAMPLER="${SAMPLER:-sid}"             # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral (unsid: sid only)
 RHO="${RHO:-0.1}"                     # sid_partial: proportion of the positions resampled at each step
+LAM="${LAM:-0.75}"                    # ancestral_restart: proportion of the steps of the ancestral pass (restart at t = 1 - LAM)
 HYP_SELECTION="${HYP_SELECTION:-sample}"  # NUM_MODES > 1: sample / average
 STEPS="${STEPS:-8,16,32,64,128}"      # comma-separated numbers of sampling steps
 NUM_SAMPLES="${NUM_SAMPLES:-1024}"    # grids generated for each number of steps
 ENTROPY_EVERY="${ENTROPY_EVERY:-0.1}" # entropy trajectory every 10% of the steps (null to disable)
 SAMPLER_NAME="${SAMPLER}"
 [ "${SAMPLER}" = "sid_partial" ] && SAMPLER_NAME="${SAMPLER}_rho${RHO}"
+[ "${SAMPLER}" = "ancestral_restart" ] && SAMPLER_NAME="${SAMPLER}_lam${LAM}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/sudoku/${TRAIN_RUN}/${CKPT}/${SAMPLER_NAME}_${HYP_SELECTION}}"
 [ "${SAMPLER}" = "sid_partial" ] && SAMPLER_ARGS="sampler.rho=${RHO}"
+[ "${SAMPLER}" = "ancestral_restart" ] && SAMPLER_ARGS="sampler.lam=${LAM}"
 
 srun apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
     python -u -m main \
