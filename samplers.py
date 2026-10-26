@@ -466,17 +466,86 @@ class SIDSampler(AncestralSampler):
   the denoiser prediction p(x0 | xt), then noise it again to the next
   (lower) noise level, x_s ~ q(x_s | x0). Works for MDLM & DUO."""
 
+  def _sid_update(self, model, log_probs, alpha_s, is_last_step):
+    """x0 ~ p(x0 | xt) on the window, noised to x_s ~ q(x_s | x0)
+    (except at the last step)."""
+    x0 = _decode_direct_tokens(
+      log_probs,
+      greedy=is_last_step and self.noise_removal == 'greedy')
+    if not is_last_step:
+      x0 = model.q_xt(x0, alpha_s, use_pure_noise=False)
+    return x0
+
   def step(self, model, state):
     log_probs, _, alpha_s, is_last_step = self._predict_x0(
       model, state)
 
     current_tokens = state.xt[:, state.start_idx:]
-    x0 = _decode_direct_tokens(
-      log_probs[:, state.start_idx:],
-      greedy=is_last_step and self.noise_removal == 'greedy')
-    if not is_last_step:
-      x0 = model.q_xt(x0, alpha_s, use_pure_noise=False)
-    current_tokens[:] = x0
+    current_tokens[:] = self._sid_update(
+      model, log_probs[:, state.start_idx:], alpha_s, is_last_step)
+
+    return self._end_step(state, is_last_step)
+
+
+class PartialSIDSampler(SIDSampler):
+  """SID where only a proportion rho of the positions of each sequence,
+  drawn uniformly at random at every step, are resampled
+  (x0 ~ p(x0 | xt), noised to x_s ~ q(x_s | x0)); the others keep
+  their current token. The last step resamples every position, so that
+  no position is left at its prior sample. rho = 1 is SID.
+  The kept tokens are noisier than alpha_s, so the state drifts from
+  the marginal q(x_s) the denoiser is conditioned on."""
+
+  def __init__(self, rho=0.1, **kwargs):
+    super().__init__(**kwargs)
+    assert 0 < rho <= 1
+    self.rho = rho
+
+  def step(self, model, state):
+    log_probs, _, alpha_s, is_last_step = self._predict_x0(
+      model, state)
+
+    current_tokens = state.xt[:, state.start_idx:]
+    proposal = self._sid_update(
+      model, log_probs[:, state.start_idx:], alpha_s, is_last_step)
+    if is_last_step:
+      current_tokens[:] = proposal
+    else:
+      B, L = current_tokens.shape
+      k = max(1, int(round(self.rho * L)))
+      idx = torch.rand(B, L, device=current_tokens.device).topk(
+        k, dim=-1).indices
+      resample = torch.zeros_like(current_tokens, dtype=torch.bool)
+      resample.scatter_(-1, idx, True)
+      current_tokens[:] = torch.where(resample, proposal,
+                                      current_tokens)
+
+    return self._end_step(state, is_last_step)
+
+
+class AncestralSIDSampler(SIDSampler):
+  """Per-token mixture of the ancestral and the SID kernels, with the
+  weight of the ancestral kernel equal to the noise level t of the
+  step: full ancestral at t = 1 (pure noise), full SID at t = 0 (data).
+  At each step, each position independently follows the ancestral
+  update with probability t, else the SID update; both use the same
+  denoiser prediction (and the same mode for a multi-mode denoiser)."""
+
+  def step(self, model, state):
+    log_probs, alpha_t, alpha_s, is_last_step = self._predict_x0(
+      model, state)
+
+    current_tokens = state.xt[:, state.start_idx:]
+    log_probs_window = log_probs[:, state.start_idx:]
+    ancestral = _decode_ancestral_update(
+      self, model, log_probs_window, current_tokens,
+      alpha_s, alpha_t, is_last_step=is_last_step)
+    sid = self._sid_update(model, log_probs_window, alpha_s,
+                           is_last_step)
+    t = state.timesteps[state.step_idx]
+    use_ancestral = torch.rand(current_tokens.shape,
+                               device=current_tokens.device) < t
+    current_tokens[:] = torch.where(use_ancestral, ancestral, sid)
 
     return self._end_step(state, is_last_step)
 
@@ -1132,6 +1201,11 @@ def run_sampler(sampler, model, num_samples, *,
   return state.xt, sampler.metadata(state)
 
 
+# Samplers built on AncestralSampler (support eval.entropy_every)
+ANCESTRAL_PREDICTORS = ('ancestral', 'sid', 'sid_partial',
+                        'ancestral_sid', 'dfm')
+
+
 def get_sampler(config):
   s = config.sampler
 
@@ -1146,16 +1220,22 @@ def get_sampler(config):
       temperature=s.temperature,
       hyp_selection=getattr(s, 'hyp_selection', 'sample'))
 
-  if s.predictor in ('ancestral', 'sid', 'dfm'):
+  if s.predictor in ANCESTRAL_PREDICTORS:
     sampler_cls = {'ancestral': AncestralSampler,
                    'sid': SIDSampler,
+                   'sid_partial': PartialSIDSampler,
+                   'ancestral_sid': AncestralSIDSampler,
                    'dfm': DFMSampler}[s.predictor]
+    kwargs = {}
+    if s.predictor == 'sid_partial':
+      kwargs['rho'] = s.rho
     return sampler_cls(
       use_float64=s.use_float64,
       noise_removal=s.noise_removal,
       steps_policy=s.steps_policy,
       temperature=s.temperature,
-      hyp_selection=getattr(s, 'hyp_selection', 'sample'))
+      hyp_selection=getattr(s, 'hyp_selection', 'sample'),
+      **kwargs)
 
   if s.predictor == 'ar':
     return ARSampler(

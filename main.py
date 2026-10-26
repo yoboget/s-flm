@@ -20,6 +20,7 @@ from tqdm import tqdm, trange
 import algo
 from callbacks.throughput import ThroughputCallback
 import dataloader
+import samplers
 import sandbox_gsm8k
 import utils
 
@@ -126,9 +127,10 @@ class _EntropyTrajectory:
   xt is the argmax of the simplex point."""
 
   def __init__(self, model, config):
-    if config.sampler.predictor not in ('ancestral', 'sid', 'dfm'):
-      raise ValueError('eval.entropy_every needs sampler=ancestral, '
-                       f'sid or dfm, got {config.sampler.predictor}')
+    if config.sampler.predictor not in samplers.ANCESTRAL_PREDICTORS:
+      raise ValueError('eval.entropy_every needs sampler in '
+                       f'{samplers.ANCESTRAL_PREDICTORS}, '
+                       f'got {config.sampler.predictor}')
     self.every = config.eval.entropy_every
     self.mask_index = (model.mask_index
                        if model.diffusion_type == 'absorbing'

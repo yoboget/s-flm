@@ -15,20 +15,25 @@
 # Run from the repo root:
 #   Baobab: `mkdir -p sbatch && sbatch run_sample_owt.sh`
 #   Local:  `sh run_sample_owt.sh` (lower BATCH_SIZE if the GPU runs out of memory)
-# Override e.g. with `STEPS=128 SAMPLER=ancestral sh run_sample_owt.sh`.
+# Override e.g. with `STEPS=128 SAMPLER=ancestral sh run_sample_owt.sh`
+# or `STEPS=1024 SAMPLER=sid_partial RHO=0.3 sh run_sample_owt.sh`.
 # Download the checkpoint first:
 #   huggingface-cli download jdeschena/s-flm owt/duo.ckpt --local-dir ./checkpoints
 # Results: ${OUTPUT_DIR}/samples.json (texts, gen. perplexity, entropy, and entropy_trajectory: the
 # entropy of xt and of x0 ~ p(x0 | xt) every ENTROPY_EVERY of the steps); the metrics are also in the log.
 
 CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
-SAMPLER="${SAMPLER:-ancestral}"             # sid / dfm / ancestral
+SAMPLER="${SAMPLER:-ancestral_sid}"       # sid / sid_partial / ancestral_sid / dfm / ancestral
+RHO="${RHO:-0.3}"                     # sid_partial: proportion of the positions resampled at each step
 STEPS="${STEPS:-128}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_BATCHES="${NUM_BATCHES:-4}"       # total samples = NUM_BATCHES * BATCH_SIZE
 NOISE="${NOISE:-log-linear}"          # log-linear / cosine-squared
 ENTROPY_EVERY="${ENTROPY_EVERY:-0.1}"  # entropy of xt and x0 every 10% of the steps (null to disable)
-OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/owt/duo_${SAMPLER}_${NOISE}_steps${STEPS}}"
+SAMPLER_NAME="${SAMPLER}"
+[ "${SAMPLER}" = "sid_partial" ] && SAMPLER_NAME="${SAMPLER}_rho${RHO}"
+OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/owt/duo_${SAMPLER_NAME}_${NOISE}_steps${STEPS}}"
+[ "${SAMPLER}" = "sid_partial" ] && SAMPLER_ARGS="sampler.rho=${RHO}"
 
 apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
     python -u -m main \
@@ -41,7 +46,7 @@ apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_L
     data.cache_dir="${PWD}/data_cache" \
     model=small \
     algo=duo-base \
-    sampler="${SAMPLER}" \
+    sampler="${SAMPLER}" ${SAMPLER_ARGS} \
     sampler.steps="${STEPS}" \
     sampler.num_sample_batches="${NUM_BATCHES}" \
     sampler.temperature=1 \
