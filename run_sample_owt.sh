@@ -24,7 +24,7 @@
 
 CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
 SAMPLER="${SAMPLER:-sid_partial}"       # sid / sid_partial / ancestral_sid / dfm / ancestral
-RHO="${RHO:-0.3}"                     # sid_partial: proportion of the positions resampled at each step
+RHO="${RHO:-0.1}"                     # sid_partial: proportion of the positions resampled at each step
 STEPS="${STEPS:-128}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_BATCHES="${NUM_BATCHES:-4}"       # total samples = NUM_BATCHES * BATCH_SIZE
