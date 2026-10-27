@@ -2,8 +2,12 @@
 #SBATCH --job-name owt-duo-ce
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
+# 2 A5000 on one node, one task per GPU (Lightning DDP under srun: ntasks-per-node = DEVICES),
+# 8 CPUs per task for its 8 data workers
 #SBATCH --gres=gpu:nvidia_rtx_a5000:2
-#SBATCH --cpus-per-task 16
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=2
+#SBATCH --cpus-per-task 8
 #SBATCH --mem=64000
 #SBATCH --partition private-kalousis-gpu,private-cui-gpu,public-gpu,shared-gpu
 
