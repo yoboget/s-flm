@@ -2,8 +2,8 @@
 #SBATCH --job-name owt-duo-ce
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
-#SBATCH --gres=gpu:nvidia_rtx_a6000:1
-#SBATCH --cpus-per-task 8
+#SBATCH --gres=gpu:nvidia_rtx_a5000:2
+#SBATCH --cpus-per-task 16
 #SBATCH --mem=64000
 #SBATCH --partition private-kalousis-gpu,private-cui-gpu,public-gpu,shared-gpu
 
@@ -23,7 +23,7 @@
 PRETRAINED="${PRETRAINED:-${PWD}/checkpoints/owt/duo.ckpt}"
 CACHE_DIR="${CACHE_DIR:-${HOME}/scratch/data_cache}"  # tokenized OWT, written by prepare_owt.sh
 HF_HOME="${HF_HOME:-${CACHE_DIR}/hf}"         # raw download of jdeschena/openwebtext (not the default ~/.cache)
-DEVICES="${DEVICES:-1}"                       # GPUs (match --gres)
+DEVICES="${DEVICES:-2}"                       # GPUs (match --gres)
 GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-128}" # sequences of 1024 tokens per optimizer step
 BATCH_SIZE="${BATCH_SIZE:-16}"                # per GPU and forward pass (gradient accumulation for the rest); lower it if out of memory
 LR="${LR:-1e-4}"
