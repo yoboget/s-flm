@@ -32,10 +32,15 @@ EMA="${EMA:-0.999}"                           # the EMA starts from the pretrain
 MAX_STEPS="${MAX_STEPS:-50000}"             # optimizer steps
 VAL_EVERY="${VAL_EVERY:-2000}"              # optimizer steps between validations
 RUN_NAME="${RUN_NAME:-owt_duo_ce_finetune}"
+mkdir -p "${CACHE_DIR}" "${HF_HOME}"
+# ~/scratch is a link to /srv/beegfs/scratch/...: use the real paths and bind them (apptainer
+# only mounts $HOME, the link target is not visible inside the container).
+CACHE_DIR="$(readlink -f "${CACHE_DIR}")"
+HF_HOME="$(readlink -f "${HF_HOME}")"
 # Lightning counts val_check_interval in forward passes, i.e. with gradient accumulation
 ACCUMULATE=$((GLOBAL_BATCH_SIZE / (BATCH_SIZE * DEVICES)))
 
-srun apptainer exec --nv --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 --env HF_HOME="${HF_HOME}" sfm.sif \
+srun apptainer exec --nv --bind "${CACHE_DIR}" --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 --env HF_HOME="${HF_HOME}" sfm.sif \
     python -u -m main \
     training.finetune_path="${PRETRAINED}" \
     training.ema="${EMA}" \

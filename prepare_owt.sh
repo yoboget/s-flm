@@ -5,6 +5,7 @@
 #SBATCH --partition shared-cpu
 #SBATCH --cpus-per-task 32
 #SBATCH --mem=96000
+#SBATCH --exclude=cpu[350,352]
 
 #SBATCH --time 08:00:00
 
@@ -21,9 +22,14 @@ HF_HOME="${HF_HOME:-${CACHE_DIR}/hf}"   # raw download (not the default ~/.cache
 NUM_PROC="${NUM_PROC:-${SLURM_CPUS_PER_TASK:-32}}"
 
 mkdir -p "${CACHE_DIR}" "${HF_HOME}"
+# ~/scratch is a link to /srv/beegfs/scratch/...: use the real paths and bind them, since
+# apptainer only mounts $HOME and the link target is not visible inside the container.
+CACHE_DIR="$(readlink -f "${CACHE_DIR}")"
+HF_HOME="$(readlink -f "${HF_HOME}")"
 
 # One thread per process: the parallelism comes from the NUM_PROC dataset workers.
 srun apptainer exec \
+    --bind "${CACHE_DIR}" \
     --env HF_HOME="${HF_HOME}" \
     --env TOKENIZERS_PARALLELISM=false \
     --env OMP_NUM_THREADS=1 \
