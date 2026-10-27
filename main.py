@@ -387,6 +387,10 @@ def _train(diffusion_model, config, logger, tokenizer):
       config.training.finetune_path,
       tokenizer=tokenizer,
       config=config)
+    # Start the data from the beginning, not from the position of the
+    # pretraining run (on_load_checkpoint)
+    model.fast_forward_epochs = None
+    model.fast_forward_batches = None
   else:
     model = diffusion_model(config, 
                             tokenizer=valid_ds.tokenizer)
