@@ -28,7 +28,7 @@ PRETRAINED="${PRETRAINED:-${PWD}/checkpoints/owt/duo.ckpt}"
 CACHE_DIR="${CACHE_DIR:-${HOME}/scratch/data_cache}"  # tokenized OWT, written by prepare_owt.sh
 HF_HOME="${HF_HOME:-${CACHE_DIR}/hf}"         # raw download of jdeschena/openwebtext (not the default ~/.cache)
 DEVICES="${DEVICES:-2}"                       # GPUs (match --gres)
-GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-128}" # sequences of 1024 tokens per optimizer step
+GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-120}" # sequences of 1024 tokens per optimizer step, a multiple of BATCH_SIZE * DEVICES
 BATCH_SIZE="${BATCH_SIZE:-12}"                 # per GPU and forward pass (gradient accumulation for the rest); 16 runs out of memory on a 24 GB A5000
 LR="${LR:-1e-4}"
 WARMUP="${WARMUP:-1000}"
@@ -43,6 +43,10 @@ CACHE_DIR="$(readlink -f "${CACHE_DIR}")"
 HF_HOME="$(readlink -f "${HF_HOME}")"
 # Lightning counts val_check_interval in forward passes, i.e. with gradient accumulation
 ACCUMULATE=$((GLOBAL_BATCH_SIZE / (BATCH_SIZE * DEVICES)))
+if [ $((GLOBAL_BATCH_SIZE % (BATCH_SIZE * DEVICES))) -ne 0 ]; then
+  echo "GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE} is not a multiple of BATCH_SIZE * DEVICES = $((BATCH_SIZE * DEVICES))" >&2
+  exit 1
+fi
 
 srun apptainer exec --nv --bind "${CACHE_DIR}" --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 --env HF_HOME="${HF_HOME}" --env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True sfm.sif \
     python -u -m main \
