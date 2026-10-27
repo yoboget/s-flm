@@ -2,9 +2,9 @@
 #SBATCH --job-name owt-duo-sid
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
-# One GPU of whichever of these 24-32 GB models is free first (a gres request takes a single
-# type). No RTX 5090: Blackwell (sm_120) needs CUDA 12.8 wheels, the image has torch 2.7 cu126.
-#SBATCH --gres=gpu:1
+# One GPU with at least 24 GB of memory, any model except Blackwell (the image's torch 2.7 cu126
+# has no sm_120 kernels)
+#SBATCH --gres=gpu:1,VramPerGpu:24G
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
 #SBATCH --partition private-kalousis-gpu,private-cui-gpu,public-gpu,shared-gpu
