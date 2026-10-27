@@ -29,7 +29,7 @@ CACHE_DIR="${CACHE_DIR:-${HOME}/scratch/data_cache}"  # tokenized OWT, written b
 HF_HOME="${HF_HOME:-${CACHE_DIR}/hf}"         # raw download of jdeschena/openwebtext (not the default ~/.cache)
 DEVICES="${DEVICES:-2}"                       # GPUs (match --gres)
 GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-128}" # sequences of 1024 tokens per optimizer step
-BATCH_SIZE="${BATCH_SIZE:-16}"                # per GPU and forward pass (gradient accumulation for the rest); lower it if out of memory
+BATCH_SIZE="${BATCH_SIZE:-12}"                 # per GPU and forward pass (gradient accumulation for the rest); 16 runs out of memory on a 24 GB A5000
 LR="${LR:-1e-4}"
 WARMUP="${WARMUP:-1000}"
 EMA="${EMA:-0.999}"                           # the EMA starts from the pretrained EMA; 0.9999 would keep it close to the ELBO model for ~10k steps
@@ -44,7 +44,7 @@ HF_HOME="$(readlink -f "${HF_HOME}")"
 # Lightning counts val_check_interval in forward passes, i.e. with gradient accumulation
 ACCUMULATE=$((GLOBAL_BATCH_SIZE / (BATCH_SIZE * DEVICES)))
 
-srun apptainer exec --nv --bind "${CACHE_DIR}" --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 --env HF_HOME="${HF_HOME}" sfm.sif \
+srun apptainer exec --nv --bind "${CACHE_DIR}" --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 --env HF_HOME="${HF_HOME}" --env PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True sfm.sif \
     python -u -m main \
     training.finetune_path="${PRETRAINED}" \
     training.ema="${EMA}" \
