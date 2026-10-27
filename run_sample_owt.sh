@@ -26,6 +26,11 @@
 
 #CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
 CKPT_PATH='outputs/owt/owt_duo_ce_finetune/checkpoints/best.ckpt'  # finetuned with run_finetune_owt_ce.sh
+# Hydra runs from hydra.run.dir, so a relative path would be resolved there: make it absolute
+case "${CKPT_PATH}" in
+  /*) ;;
+  *) CKPT_PATH="${PWD}/${CKPT_PATH}" ;;
+esac
 SAMPLER="${SAMPLER:-sid}"       # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral
 RHO="${RHO:-0.1}"                     # sid_partial: proportion of the positions resampled at each step
 LAM="${LAM:-0.8}"                    # ancestral_restart: proportion of the steps of the ancestral pass (restart at t = 1 - LAM)
@@ -37,7 +42,7 @@ ENTROPY_EVERY="${ENTROPY_EVERY:-0.1}"  # entropy of xt and x0 every 10% of the s
 SAMPLER_NAME="${SAMPLER}"
 [ "${SAMPLER}" = "sid_partial" ] && SAMPLER_NAME="${SAMPLER}_rho${RHO}"
 [ "${SAMPLER}" = "ancestral_restart" ] && SAMPLER_NAME="${SAMPLER}_lam${LAM}"
-OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/owt/duo_${SAMPLER_NAME}_${NOISE}_steps${STEPS}}"
+OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/owt/ce_denoiser_${SAMPLER_NAME}_${NOISE}_steps${STEPS}}"
 [ "${SAMPLER}" = "sid_partial" ] && SAMPLER_ARGS="sampler.rho=${RHO}"
 [ "${SAMPLER}" = "ancestral_restart" ] && SAMPLER_ARGS="sampler.lam=${LAM}"
 
