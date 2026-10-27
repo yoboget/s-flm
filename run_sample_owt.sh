@@ -22,8 +22,9 @@
 # Results: ${OUTPUT_DIR}/samples.json (texts, gen. perplexity, entropy, and entropy_trajectory: the
 # entropy of xt and of x0 ~ p(x0 | xt) every ENTROPY_EVERY of the steps); the metrics are also in the log.
 
-CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
-SAMPLER="${SAMPLER:-ancestral_restart}"       # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral
+#CKPT_PATH="${CKPT_PATH:-${PWD}/checkpoints/owt/duo.ckpt}"
+CKPT_PATH='outputs/owt/owt_duo_ce_finetune/checkpoints/best.ckpt'  # finetuned with run_finetune_owt_ce.sh
+SAMPLER="${SAMPLER:-sid}"       # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral
 RHO="${RHO:-0.1}"                     # sid_partial: proportion of the positions resampled at each step
 LAM="${LAM:-0.8}"                    # ancestral_restart: proportion of the steps of the ancestral pass (restart at t = 1 - LAM)
 STEPS="${STEPS:-128}"                  # number of sampling steps

@@ -11,11 +11,12 @@
 DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
 NUM_MODES="${NUM_MODES:-1}"          # must match the checkpoint
 HYP_LOSS="${HYP_LOSS:-mixture}"       # only used to find the training run
-TRAIN_RUN="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${DIFFICULTY}"
+TRAIN_LOSS="${TRAIN_LOSS:-elbo}"  # only used to find the training run
+TRAIN_RUN="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${TRAIN_LOSS}_${DIFFICULTY}"
 CKPT="${CKPT:-best}"                   # best (lowest val/nll) / last / e.g. 106-20000 (step checkpoint)
 CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/${CKPT}.ckpt}"
 
-SAMPLER="${SAMPLER:-sid}"             # sid / dfm / ancestral
+SAMPLER="${SAMPLER:-ancestral}"             # sid / dfm / ancestral
 HYP_SELECTION="${HYP_SELECTION:-sample}"  # sample / average
 STEPS="${STEPS:-8, 16, 32, 64, 128}"      # comma-separated numbers of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-256}"       # lower it if the GPU runs out of memory
