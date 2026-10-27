@@ -2,7 +2,7 @@
 #SBATCH --job-name sudoku-duo-modes
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
-#SBATCH --gres=gpu:nvidia_rtx_a6000:1
+#SBATCH --gres=gpu:nvidia_rtx_a4000:1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
 #SBATCH --partition private-kalousis-gpu,private-cui-gpu,public-gpu,shared-gpu
@@ -15,7 +15,7 @@
 # Resubmitting with the same difficulty resumes from the last checkpoint.
 
 DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
-NUM_MODES="${NUM_MODES:-32}"          # 1: standard single-mode denoiser
+NUM_MODES="${NUM_MODES:-1}"          # 1: standard single-mode denoiser
 HYP_LOSS="${HYP_LOSS:-mixture}"       # mixture / wta / tempered
 LOSS_WEIGHTING="${LOSS_WEIGHTING:-none}"  # none (cross-entropy of x0) / elbo (DUO ELBO)
 RUN_NAME="${RUN_NAME:-sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${LOSS_WEIGHTING}_${DIFFICULTY}}"
