@@ -2,7 +2,10 @@
 #SBATCH --job-name owt-duo-sid
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
+# Any GPU but the Blackwell ones (RTX PRO 6000, sm_120): the image's torch 2.7 cu126 has no
+# kernels for them. Bamboo's other GPUs are Ampere (RTX 3090, A100) or Hopper (H100, H200).
 #SBATCH --gres=gpu:1
+#SBATCH --constraint="COMPUTE_TYPE_AMPERE"
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
 #SBATCH --partition public-gpu,shared-gpu
