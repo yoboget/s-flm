@@ -4,7 +4,7 @@
 #SBATCH --output sbatch/out.o%j
 # 2 A5000 on one node, one task per GPU (Lightning DDP under srun: ntasks-per-node = DEVICES),
 # 8 CPUs per task for its 8 data workers
-#SBATCH --gres=gpu:nvidia_rtx_a5000:2
+#SBATCH --gres=gpu:nvidia_rtx_a6000:2
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=2
 #SBATCH --cpus-per-task 8
