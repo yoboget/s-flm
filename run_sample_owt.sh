@@ -4,7 +4,7 @@
 #SBATCH --output sbatch/out.o%j
 # One GPU with at least 24 GB of memory, any model except Blackwell (the image's torch 2.7 cu126
 # has no sm_120 kernels)
-#SBATCH --gres=gpu:nvidia_rtx_a5000:1
+#SBATCH --gres=gpu:nvidia_rtx_a6000:1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
 #SBATCH --partition private-kalousis-gpu,private-cui-gpu,public-gpu,shared-gpu
