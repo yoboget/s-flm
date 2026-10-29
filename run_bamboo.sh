@@ -11,10 +11,10 @@
 
 # Train S-FLM on sudoku inside the apptainer image (see apptainer/sfm.def).
 # Submit from the repo root: `mkdir -p sbatch && sbatch run_bamboo.sh`
-# Override the difficulty with: `DIFFICULTY=hard sbatch run_bamboo.sh`
+# Set the difficulty below.
 # Resubmitting with the same difficulty resumes from the last checkpoint.
 
-DIFFICULTY="${DIFFICULTY:-easy}"      # easy / medium / hard
+DIFFICULTY="easy"      # easy / medium / hard
 RUN_NAME="sudoku_sfm_${DIFFICULTY}"
 
 srun apptainer exec --nv --env WANDB_MODE=online sfm.sif \

@@ -32,7 +32,7 @@ class NoiseSchedule(torch.nn.Module, abc.ABC):
     pass
 
 
-class CosineSquared(NoiseSchedule):
+class Cosine(NoiseSchedule):
   """alpha_t = cos(pi/2 * t)^power = sin(pi/2 * (1-t))^power; power = 2
   is cosine-squared. Steps uniform in t spend more of them near the
   data (alpha ~ 1) for power < 2, near the noise (alpha ~ 0) for
@@ -54,6 +54,10 @@ class CosineSquared(NoiseSchedule):
     sin = torch.sin(angle).clamp(min=1e-6)
     return (-(1 - self.eps) * self.power * sin ** (self.power - 1)
             * torch.cos(angle) * self.half_pi)
+
+
+# Former name (noise type cosine-squared)
+CosineSquared = Cosine
 
 
 class LogLinear(NoiseSchedule):
@@ -261,15 +265,28 @@ class AdaptiveSchedule(NoiseSchedule):
       self._dalpha_spline, self.base_schedule.alpha_prime_t, t)
 
 
+def _base_noise(noise_type, eps, power=2.0):
+  if noise_type == 'log-linear':
+    return LogLinear(eps)
+  # cosine-squared: former name of cosine
+  if noise_type in ('cosine', 'cosine-squared'):
+    return Cosine(eps, power)
+  raise ValueError(f'Unknown noise type: {noise_type}')
+
+
+def get_sampling_noise(noise_config, eps):
+  """Schedule of a sampler kernel (sampler.ancestral_noise /
+  sampler.sid_noise): {type: log-linear / cosine, power}, with the eps
+  of the model noise schedule. The denoiser only sees alpha_t, so it
+  need not match the training schedule."""
+  return _base_noise(noise_config.type, eps,
+                     noise_config.get('power', 2.0))
+
+
 def get_noise(config):
   noise_config = config.noise
-  if noise_config.type == 'log-linear':
-    noise = LogLinear(noise_config.eps)
-  elif noise_config.type == 'cosine-squared':
-    noise = CosineSquared(noise_config.eps,
-                          getattr(noise_config, 'power', 2.0))
-  else:
-    raise ValueError(f'Unknown noise type: {noise_config.type}')
+  noise = _base_noise(noise_config.type, noise_config.eps,
+                      getattr(noise_config, 'power', 2.0))
 
   if noise_config.alpha_min is not None or noise_config.alpha_max is not None:
     alpha_min = noise_config.alpha_min

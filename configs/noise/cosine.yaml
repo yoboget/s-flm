@@ -1,4 +1,4 @@
-type: cosine-squared
+type: cosine
 eps: 1e-3
 power: 2  # alpha_t = cos(pi/2 t)^power: < 2 more steps near the data, > 2 near the noise
 alpha_min: null

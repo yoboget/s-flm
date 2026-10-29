@@ -24,18 +24,18 @@
 # The first launch downloads OpenWebText (jdeschena/openwebtext) and tokenizes it into
 # CACHE_DIR (tens of GB, a few hours); later launches reuse it.
 
-PRETRAINED="${PRETRAINED:-${PWD}/checkpoints/owt/duo.ckpt}"
-CACHE_DIR="${CACHE_DIR:-${HOME}/scratch/data_cache}"  # tokenized OWT, written by prepare_owt.sh
-HF_HOME="${HF_HOME:-${CACHE_DIR}/hf}"         # raw download of jdeschena/openwebtext (not the default ~/.cache)
-DEVICES="${DEVICES:-2}"                       # GPUs (match --gres)
-GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-120}" # sequences of 1024 tokens per optimizer step, a multiple of BATCH_SIZE * DEVICES
-BATCH_SIZE="${BATCH_SIZE:-12}"                 # per GPU and forward pass (gradient accumulation for the rest); 16 runs out of memory on a 24 GB A5000
-LR="${LR:-1e-4}"
-WARMUP="${WARMUP:-1000}"
-EMA="${EMA:-0.999}"                           # the EMA starts from the pretrained EMA; 0.9999 would keep it close to the ELBO model for ~10k steps
-MAX_STEPS="${MAX_STEPS:-50000}"             # optimizer steps
-VAL_EVERY="${VAL_EVERY:-2000}"              # optimizer steps between validations
-RUN_NAME="${RUN_NAME:-owt_duo_ce_finetune}"
+PRETRAINED="${PWD}/checkpoints/owt/duo.ckpt"
+CACHE_DIR="${HOME}/scratch/data_cache"  # tokenized OWT, written by prepare_owt.sh
+HF_HOME="${CACHE_DIR}/hf"         # raw download of jdeschena/openwebtext (not the default ~/.cache)
+DEVICES="2"                       # GPUs (match --gres)
+GLOBAL_BATCH_SIZE="120" # sequences of 1024 tokens per optimizer step, a multiple of BATCH_SIZE * DEVICES
+BATCH_SIZE="12"                 # per GPU and forward pass (gradient accumulation for the rest); 16 runs out of memory on a 24 GB A5000
+LR="1e-4"
+WARMUP="1000"
+EMA="0.999"                           # the EMA starts from the pretrained EMA; 0.9999 would keep it close to the ELBO model for ~10k steps
+MAX_STEPS="50000"             # optimizer steps
+VAL_EVERY="2000"              # optimizer steps between validations
+RUN_NAME="owt_duo_ce_finetune"
 mkdir -p "${CACHE_DIR}" "${HF_HOME}"
 # ~/scratch is a link to /srv/beegfs/scratch/...: use the real paths and bind them (apptainer
 # only mounts $HOME, the link target is not visible inside the container).

@@ -11,14 +11,14 @@
 
 # Baobab: train a multi-mode DUO (uniform-state diffusion, sid sampler) on sudoku inside the apptainer image (see apptainer/sfm.def).
 # Submit from the repo root: `mkdir -p sbatch && sbatch run.sh`
-# Override the difficulty with: `DIFFICULTY=hard sbatch run.sh`
+# Set the run in the settings below.
 # Resubmitting with the same difficulty resumes from the last checkpoint.
 
-DIFFICULTY="${DIFFICULTY:-hard}"      # easy / medium / hard
-NUM_MODES="${NUM_MODES:-1}"          # 1: standard single-mode denoiser
-HYP_LOSS="${HYP_LOSS:-mixture}"       # mixture / wta / tempered
-LOSS_WEIGHTING="${LOSS_WEIGHTING:-none}"  # none (cross-entropy of x0) / elbo (DUO ELBO)
-RUN_NAME="${RUN_NAME:-sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${LOSS_WEIGHTING}_${DIFFICULTY}}"
+DIFFICULTY="hard"      # easy / medium / hard
+NUM_MODES="1"          # 1: standard single-mode denoiser
+HYP_LOSS="mixture"       # mixture / wta / tempered
+LOSS_WEIGHTING="none"  # none (cross-entropy of x0) / elbo (DUO ELBO)
+RUN_NAME="sudoku_duo_sid_M${NUM_MODES}_${HYP_LOSS}_${LOSS_WEIGHTING}_${DIFFICULTY}"
 
 srun apptainer exec --nv --env WANDB_MODE=online sfm.sif \
     python -u -m main \

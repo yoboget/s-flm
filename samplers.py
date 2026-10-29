@@ -17,6 +17,7 @@ import torch.nn.functional as F
 from dataclass_patch import dataclass
 import candi_utils
 import modes
+import noise_schedules
 import utils
 
 
@@ -365,6 +366,27 @@ class BaseState:
   prefix_lengths: torch.Tensor = None  # (B,) int64
 
 
+def _alphas(noise, timesteps, model):
+  """alpha_t of each time of the grid under the sampling schedule
+  `noise` (None: the model schedule), in the model dtype."""
+  noise = model.noise if noise is None else noise
+  return noise(timesteps.to(model.dtype))[1]
+
+
+def _schedule_time(noise, alpha, model, eps):
+  """The t in [eps, 1] with alpha_t = alpha under the sampling schedule
+  `noise` (None: the model schedule); bisection, alpha_t decreasing."""
+  noise = model.noise if noise is None else noise
+  lo = torch.tensor([eps], dtype=torch.float64, device=model.device)
+  hi = torch.ones_like(lo)
+  for _ in range(60):
+    mid = (lo + hi) / 2
+    above = noise(mid)[1] > alpha
+    lo = torch.where(above, mid, lo)
+    hi = torch.where(above, hi, mid)
+  return float((lo + hi) / 2)
+
+
 class Sampler(abc.ABC):
   """API that all samplers must comply with."""
 
@@ -411,6 +433,9 @@ class AncestralState(BaseState):
   # sampler=ancestral_restart: number of ancestral steps, after which
   # the sample is noised again and denoised with sid
   restart_idx: int = None
+  # alphas[i]: alpha_t of timesteps[i], from the schedule of the kernel
+  # (sampler.ancestral_noise / sid_noise); None: the model schedule
+  alphas: torch.Tensor = None
 
 
 @dataclass
@@ -425,8 +450,13 @@ class AncestralSampler(Sampler):
   def __init__(self, use_float64=False,
                noise_removal='ancestral', steps_policy='full',
                temperature=1.0, hyp_selection='sample',
-               x0_param='elbo', sid_x0_param='posterior'):
+               x0_param='elbo', sid_x0_param='posterior',
+               ancestral_noise=None, sid_noise=None):
     self.use_float64 = use_float64
+    # Sampling schedules (noise_schedules.NoiseSchedule) of the
+    # ancestral and of the sid steps; None: the model schedule (noise)
+    self.ancestral_noise = ancestral_noise
+    self.sid_noise = sid_noise
     self.noise_removal = noise_removal
     # Uniform diffusion: what the denoiser outputs, the DUO x_theta
     # ('elbo', algo.loss_weighting=elbo) or p(x0 | xt) ('posterior',
@@ -473,7 +503,15 @@ class AncestralSampler(Sampler):
       step_idx=0, nfe=0, done=False,
       prefix_tokens=prefix_tokens,
       prefix_lengths=prefix_lengths)
+    noise = self._kernel_noise()
+    if noise is not None:
+      state.alphas = _alphas(noise, timesteps, model)
     return state
+
+  def _kernel_noise(self):
+    """Sampling schedule of the steps of this sampler (None: the model
+    schedule)."""
+    return self.ancestral_noise
 
   def _predict_x0(self, model, state):
     """Denoiser prediction log p(x0 | xt) at the current step, with the
@@ -482,9 +520,14 @@ class AncestralSampler(Sampler):
     t = state.timesteps[state.step_idx] * state.ones
     s = state.timesteps[state.step_idx + 1] * state.ones
 
-    _, alpha_t = model.noise(t)
+    if state.alphas is not None:
+      alpha_t = state.alphas[state.step_idx] * state.ones
+    else:
+      _, alpha_t = model.noise(t)
     if is_last_step:
       alpha_s = torch.ones_like(alpha_t)
+    elif state.alphas is not None:
+      alpha_s = state.alphas[state.step_idx + 1] * state.ones
     else:
       _, alpha_s = model.noise(s)
     sigma_t = model._sigma_from_alphat(alpha_t)
@@ -530,6 +573,9 @@ class SIDSampler(AncestralSampler):
   """Simple iterative denoising (ModeFlowGraph 'sid'): sample x0 from
   the denoiser prediction p(x0 | xt), then noise it again to the next
   (lower) noise level, x_s ~ q(x_s | x0). Works for MDLM & DUO."""
+
+  def _kernel_noise(self):
+    return self.sid_noise
 
   def _sid_update(self, model, log_probs, xt, alpha_t, alpha_s,
                   is_last_step):
@@ -601,7 +647,12 @@ class AncestralSIDSampler(SIDSampler):
   step: full ancestral at t = 1 (pure noise), full SID at t = 0 (data).
   At each step, each position independently follows the ancestral
   update with probability t, else the SID update; both use the same
-  denoiser prediction (and the same mode for a multi-mode denoiser)."""
+  denoiser prediction (and the same mode for a multi-mode denoiser).
+  Both kernels share the steps, so they use the model schedule (noise),
+  not sampler.ancestral_noise / sid_noise."""
+
+  def _kernel_noise(self):
+    return None
 
   def step(self, model, state):
     log_probs, alpha_t, alpha_s, is_last_step = self._predict_x0(
@@ -652,36 +703,34 @@ class DirichletSIDSampler(AncestralSampler):
 class AncestralRestartSampler(SIDSampler):
   """Ancestral denoising followed by a sid refinement. Of the N steps,
   round(lam * N) denoise completely with the ancestral sampler, from
-  t = 1 to the data; the sample is then noised again to t = 1 - lam,
-  x ~ q(x_{1 - lam} | x0), and denoised with sid in the remaining
-  steps. lam = 1 is ancestral; lam = 0 is sid.
-  restart_alpha, if set, gives the restart noise level as alpha instead
-  of 1 - lam (the time is found by inverting the noise schedule), so
-  that it does not move with the schedule; lam then only sets the
-  split of the steps.
+  t = 1 to the data; the sample is then noised again to the noise level
+  alpha = lam, x ~ q(x_s | x0) with alpha_s = lam, and denoised with
+  sid in the remaining steps. lam = 1 is ancestral; lam = 0 is sid.
+  The restart time s is found by inverting the noise schedule, so the
+  restart noise level does not move with the schedule (log-linear:
+  s = (1 - lam) / (1 - eps), the former restart at t = 1 - lam up to
+  eps).
+  Schedules: the ancestral pass follows sampler.ancestral_noise, the
+  steps after the restart sampler.sid_noise (restart_sampler='sid') or
+  sampler.ancestral_noise (restart_sampler='ancestral').
+  restart_sampler: the kernel after the restart, 'sid' or 'ancestral'
+  (a second ancestral pass from the restart time: same restart and
+  steps, to ablate the sid refinement against the restart itself).
   state.timesteps[i] is the time of the state before step i (the
   restart time for i = restart_idx)."""
 
-  def __init__(self, lam=0.75, restart_alpha=None, **kwargs):
+  def __init__(self, lam=0.75, restart_sampler='sid', **kwargs):
     super().__init__(**kwargs)
     assert 0 <= lam <= 1
-    assert restart_alpha is None or 0 < restart_alpha < 1
+    assert restart_sampler in ('sid', 'ancestral')
     self.lam = lam
-    self.restart_alpha = restart_alpha
+    self.restart_sampler = restart_sampler
 
-  def _restart_time(self, model, eps):
-    """Time of the restart: 1 - lam, or the t with alpha_t =
-    restart_alpha (bisection, alpha_t decreasing in t)."""
-    if self.restart_alpha is None:
-      return 1 - self.lam
-    lo = torch.tensor([eps], dtype=torch.float64, device=model.device)
-    hi = torch.ones_like(lo)
-    for _ in range(60):
-      mid = (lo + hi) / 2
-      above = model.noise(mid)[1] > self.restart_alpha
-      lo = torch.where(above, mid, lo)
-      hi = torch.where(above, hi, mid)
-    return float((lo + hi) / 2)
+  def _restart_noise(self):
+    """Schedule of the steps after the restart."""
+    if self.restart_sampler == 'sid':
+      return self.sid_noise
+    return self.ancestral_noise
 
   def init_state(self, model, num_samples, *, num_steps=None,
                  eps=1e-5, **kwargs):
@@ -690,12 +739,23 @@ class AncestralRestartSampler(SIDSampler):
     num_steps = len(state.timesteps) - 1
     n_ancestral = int(round(self.lam * num_steps))
     n_sid = num_steps - n_ancestral
+    timesteps = state.timesteps
     if 0 < n_ancestral and 0 < n_sid:
-      device = state.timesteps.device
-      state.timesteps = torch.cat([
-        torch.linspace(1, eps, n_ancestral + 1, device=device)[:-1],
-        torch.linspace(self._restart_time(model, eps), eps,
-                       n_sid + 1, device=device)])
+      # Each part of the grid is uniform in the time of its own schedule
+      device = timesteps.device
+      first = torch.linspace(1, eps, n_ancestral + 1,
+                             device=device)[:-1]
+      restart = _schedule_time(self._restart_noise(), self.lam,
+                               model, eps)
+      second = torch.linspace(restart, eps, n_sid + 1, device=device)
+      state.timesteps = torch.cat([first, second])
+      state.alphas = torch.cat([
+        _alphas(self.ancestral_noise, first, model),
+        _alphas(self._restart_noise(), second, model)])
+    elif n_sid == 0:  # ancestral only
+      state.alphas = _alphas(self.ancestral_noise, timesteps, model)
+    else:  # restart from pure noise: the second part only
+      state.alphas = _alphas(self._restart_noise(), timesteps, model)
     state.restart_idx = n_ancestral
     return state
 
@@ -709,14 +769,14 @@ class AncestralRestartSampler(SIDSampler):
 
     current_tokens = state.xt[:, state.start_idx:]
     log_probs_window = log_probs[:, state.start_idx:]
-    if state.step_idx < state.restart_idx:
+    if (state.step_idx < state.restart_idx
+        or self.restart_sampler == 'ancestral'):
       x = _decode_ancestral_update(
         self, model, log_probs_window, current_tokens,
         alpha_s, alpha_t, is_last_step=is_last_step)
       if state.step_idx == state.restart_idx - 1 and not (
           state.step_idx == len(state.timesteps) - 2):
-        restart = state.timesteps[state.restart_idx] * state.ones
-        _, alpha_restart = model.noise(restart)
+        alpha_restart = state.alphas[state.restart_idx] * state.ones
         x = model.q_xt(x, alpha_restart, use_pure_noise=False)
       current_tokens[:] = x
     else:
@@ -740,6 +800,10 @@ class DFMSampler(AncestralSampler):
   i.e. each token jumps to a sample of p(x1 | x_t) with probability
   (alpha_s - alpha_t) / (1 - alpha_t). Works for MDLM & DUO (for MDLM,
   it coincides with ancestral sampling)."""
+
+  def _kernel_noise(self):
+    # Flow time, on the model schedule (noise)
+    return None
 
   def step(self, model, state):
     log_probs, alpha_t, alpha_s, is_last_step = self._predict_x0(
@@ -1405,7 +1469,12 @@ def get_sampler(config):
       kwargs['rho'] = s.rho
     if s.predictor == 'ancestral_restart':
       kwargs['lam'] = s.lam
-      kwargs['restart_alpha'] = getattr(s, 'restart_alpha', None)
+      kwargs['restart_sampler'] = getattr(s, 'restart_sampler', 'sid')
+    # Sampling schedules of the kernels (null: the model schedule)
+    for key in ('ancestral_noise', 'sid_noise'):
+      if s.get(key, None) is not None:
+        kwargs[key] = noise_schedules.get_sampling_noise(
+          s[key], config.noise.eps)
     return sampler_cls(
       use_float64=s.use_float64,
       noise_removal=s.noise_removal,

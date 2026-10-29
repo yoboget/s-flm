@@ -1,6 +1,9 @@
 # SID resampling only a proportion rho of the positions (random) at each step, all of them at the last step (MDLM / DUO)
 predictor: sid_partial
 rho: 0.1               # proportion of the positions resampled at each step (1: sid)
+sid_noise:               # schedule of the sid steps (null: the model schedule, noise)
+  type: cosine           # log-linear / cosine
+  power: 0.5             # cosine only: alpha_t = cos(pi/2 t)^power
 steps: 1024
 steps_policy: full      # full: use steps as-is / proportional: steps * num_tokens_to_generate
 noise_removal: ancestral  # ancestral (sample) / greedy (argmax) at the final step

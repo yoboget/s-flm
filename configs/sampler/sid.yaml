@@ -1,5 +1,8 @@
 # Simple iterative denoising: sample x0 ~ p(x0 | xt), re-noise to x_s ~ q(x_s | x0) (MDLM / DUO)
 predictor: sid
+sid_noise:               # schedule of the sid steps (null: the model schedule, noise)
+  type: cosine           # log-linear / cosine
+  power: 0.5             # cosine only: alpha_t = cos(pi/2 t)^power
 steps: 1024
 steps_policy: full      # full: use steps as-is / proportional: steps * num_tokens_to_generate
 noise_removal: ancestral  # ancestral (sample) / greedy (argmax) at the final step

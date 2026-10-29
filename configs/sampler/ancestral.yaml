@@ -1,5 +1,8 @@
 # Ancestral sampler (posterior sampling for MDLM / DUO)
 predictor: ancestral
+ancestral_noise:         # schedule of the ancestral steps (null: the model schedule, noise)
+  type: log-linear       # log-linear / cosine
+  power: 2               # cosine only: alpha_t = cos(pi/2 t)^power
 steps: 1024
 steps_policy: full      # full: use steps as-is / proportional: steps * num_tokens_to_generate
 noise_removal: ancestral  # ancestral / greedy

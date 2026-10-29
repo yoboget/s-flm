@@ -2,7 +2,7 @@
 #SBATCH --job-name owt-sweep
 #SBATCH --error sbatch/error.e%A_%a
 #SBATCH --output sbatch/out.o%A_%a
-#SBATCH --array=0-2
+#SBATCH --array=0-3
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
@@ -15,41 +15,47 @@
 #   duo         + sid        (DUO x_theta converted to p(x0 | xt): sid_x0_param=elbo)
 #   ce_denoiser + sid        (cross-entropy model, its output is already p(x0 | xt))
 #   duo         + ancestral  (DUO x_theta used as is: x0_param=elbo)
+#   ce_denoiser + ancestral_restart, LAM (ancestral pass on the CE output converted to x_theta,
+#                 x0_param=posterior; sid after the restart on the CE output as is, sid_x0_param=posterior)
 # and every number of steps in STEPS. Each run decodes the last step twice from the same state:
 # sampled (noise_removal=ancestral) and argmax (greedy), each scored on its own.
 # Checkpoints: checkpoints/owt/duo.ckpt and checkpoints/owt/ce_denoiser.ckpt.
-# Run from the repo root: `mkdir -p sbatch && sbatch run_sample_owt_sweep.sh` submits the three
-# configurations as array tasks 0, 1, 2 (one GPU each, in parallel if GPUs are free). One only:
-# `sbatch --array=1 run_sample_owt_sweep.sh`, or without Slurm `CONFIG=1 sh run_sample_owt_sweep.sh`
-# (CONFIG is the index or the name, e.g. CONFIG=ce_denoiser_sid).
-# Override e.g. with `STEPS="32 64" sbatch run_sample_owt_sweep.sh`
+# Run from the repo root: `mkdir -p sbatch && sbatch run_sample_owt_sweep.sh` submits the
+# configurations as array tasks 0, 1, 2, 3 (one GPU each, in parallel if GPUs are free). One only:
+# `sbatch --array=1 run_sample_owt_sweep.sh`; without Slurm, set CONFIG below (the index or the
+# name, e.g. ce_denoiser_sid). Set the run in the settings below.
 # Results:
 #   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples.json  (texts + metrics, sampled last step;
-#   <noise>: log-linear / cosine-p<power>)
+#   <noise>: the schedule of the sampler, SID_NOISE for sid, ANC_NOISE for ancestral and
+#   ANC_NOISE+SID_NOISE for ancestral_restart, as log-linear / cosine-p<power>)
 #   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples_greedy.json  (same, argmax last step)
 #   ${SWEEP_DIR}/summary.json  (metrics only, both last steps of every run found in SWEEP_DIR;
 #   rebuilt after each run, by whichever task finishes it)
 # A run whose samples.json and samples_greedy.json already exist is skipped, so resubmitting the
 # job resumes the sweep.
 
-STEPS="${STEPS:-32 64 128 256}"        # space-separated numbers of sampling steps
+STEPS="32 64 128 256"        # space-separated numbers of sampling steps
 BATCH_SIZE=8                           # 16 runs out of memory on a 24 GB GPU
 NUM_BATCHES=64                         # 512 samples = NUM_BATCHES * BATCH_SIZE
-PPL_BATCH_SIZE="${PPL_BATCH_SIZE:-8}"  # sequences scored at once by gpt2-large
-NOISE="${NOISE:-cosine-squared}"      # log-linear / cosine-squared
-NOISE_POWER="${NOISE_POWER:-0.5}"       # cosine-squared only: alpha_t = cos(pi/2 t)^NOISE_POWER (< 2 more steps near the data, > 2 near the noise)
-NOISE_NAME="${NOISE}"
-[ "${NOISE}" = "cosine-squared" ] && NOISE_NAME="cosine-p${NOISE_POWER}" && NOISE_ARGS="noise.power=${NOISE_POWER}"
-ENTROPY_EVERY="${ENTROPY_EVERY:-0.1}"  # entropy of xt and x0 every 10% of the steps (null to disable)
-CKPT_DIR="${CKPT_DIR:-${PWD}/checkpoints/owt}"
-SWEEP_DIR="${SWEEP_DIR:-${PWD}/eval_runs/owt/sweep}"
+PPL_BATCH_SIZE="8"  # sequences scored at once by gpt2-large
+ANC_NOISE="log-linear"      # schedule of the ancestral runs and of the ancestral pass of ancestral_restart: log-linear / cosine
+ANC_NOISE_POWER="2"   # cosine only: alpha_t = cos(pi/2 t)^power (< 2 more steps near the data, > 2 near the noise)
+SID_NOISE="cosine"          # schedule of the sid runs and of the sid steps after the restart: log-linear / cosine
+SID_NOISE_POWER="0.5" # cosine only
+LAM="0.8"                    # ancestral_restart: proportion of the steps of the ancestral pass and restart noise level alpha
+sched_name() { if [ "$1" = "cosine" ]; then echo "cosine-p$2"; else echo "$1"; fi; }
+ENTROPY_EVERY="0.1"  # entropy of xt and x0 every 10% of the steps (null to disable)
+CKPT_DIR="${PWD}/checkpoints/owt"
+SWEEP_DIR="${PWD}/eval_runs/owt/sweep"
 
 # index name checkpoint sampler x0_param sid_x0_param
+# ancestral_restart restarts with sid (restart_sampler=sid) at LAM; the run names get _lam<LAM>
 CONFIGS="0 duo_sid_sidelbo duo sid elbo elbo
 1 ce_denoiser_sid ce_denoiser sid posterior posterior
-2 duo_ancestral duo ancestral elbo posterior"
-CONFIG="${CONFIG:-${SLURM_ARRAY_TASK_ID:-}}"
-[ -n "${CONFIG}" ] || { echo "Set CONFIG (0, 1, 2 or a name) or submit as an array job"; exit 1; }
+2 duo_ancestral duo ancestral elbo posterior
+3 ce_denoiser_restart ce_denoiser ancestral_restart posterior posterior"
+CONFIG="${SLURM_ARRAY_TASK_ID}"        # the array task; without Slurm, set the index or the name here
+[ -n "${CONFIG}" ] || { echo "Set CONFIG (0, 1, 2, 3 or a name) or submit as an array job"; exit 1; }
 SELECTED=$(echo "${CONFIGS}" | awk -v c="${CONFIG}" '$1 == c || $2 == c')
 [ -n "${SELECTED}" ] || { echo "Unknown CONFIG ${CONFIG}"; exit 1; }
 
@@ -57,7 +63,7 @@ export WANDB_MODE=offline TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 PYTORCH_CUDA_ALLOC_
 if [ -f sfm.sif ]; then
   RUN="apptainer exec --nv sfm.sif python"
 else
-  RUN="${PYTHON:-python}"
+  RUN="python"  # the active python, e.g. after `conda activate sfm`
 fi
 
 ckpt=$(echo "${SELECTED}" | awk '{print $3}')
@@ -65,6 +71,8 @@ ckpt=$(echo "${SELECTED}" | awk '{print $3}')
 mkdir -p "${SWEEP_DIR}"
 
 sample() {  # name ckpt sampler x0_param sid_x0_param steps output_dir
+  RESTART_ARGS=""
+  [ "$3" = "ancestral_restart" ] && RESTART_ARGS="sampler.lam=${LAM} ++sampler.restart_sampler=sid"
   ${RUN} -u -m main \
       mode=sample_eval \
       eval.checkpoint_path="${CKPT_DIR}/$2.ckpt" \
@@ -77,13 +85,16 @@ sample() {  # name ckpt sampler x0_param sid_x0_param steps output_dir
       data.cache_dir="${PWD}/data_cache" \
       model=small \
       algo=duo-base \
-      sampler="$3" \
+      sampler="$3" ${RESTART_ARGS} \
       ++sampler.x0_param="$4" \
       ++sampler.sid_x0_param="$5" \
       sampler.steps="$6" \
       sampler.num_sample_batches="${NUM_BATCHES}" \
       sampler.temperature=1 \
-      noise="${NOISE}" ${NOISE_ARGS} \
+      ++sampler.ancestral_noise.type="${ANC_NOISE}" \
+      ++sampler.ancestral_noise.power="${ANC_NOISE_POWER}" \
+      ++sampler.sid_noise.type="${SID_NOISE}" \
+      ++sampler.sid_noise.power="${SID_NOISE_POWER}" \
       loader.eval_batch_size="${BATCH_SIZE}" \
       loader.num_workers=4 \
       trainer.num_nodes=1 \
@@ -101,6 +112,12 @@ for path in sorted(glob.glob(os.path.join(sweep_dir, '*', 'samples*.json'))):
   with open(path) as f:
     s = json.load(f)
   c = s['config']
+  # The schedule of the sampler's kernel; runs made before the per-kernel schedules used noise
+  key = 'sid_noise' if c['sampler']['predictor'] == 'sid' else 'ancestral_noise'
+  noise = c['sampler'].get(key) or c['noise']
+  noise_type = 'cosine' if noise['type'] == 'cosine-squared' else noise['type']
+  restart = c['sampler']['predictor'] == 'ancestral_restart'
+  sid_noise = c['sampler'].get('sid_noise') if restart else None
   runs.append(dict(
     run=os.path.basename(os.path.dirname(path)),
     last_step='greedy' if path.endswith('_greedy.json') else 'sample',
@@ -108,8 +125,13 @@ for path in sorted(glob.glob(os.path.join(sweep_dir, '*', 'samples*.json'))):
     sampler=c['sampler']['predictor'],
     x0_param=c['sampler'].get('x0_param'),
     sid_x0_param=c['sampler'].get('sid_x0_param'),
-    noise=c['noise']['type'],
-    noise_power=c['noise'].get('power'),  # cosine-squared only
+    noise=noise_type,
+    noise_power=noise.get('power') if noise_type == 'cosine' else None,
+    # ancestral_restart: noise / noise_power are the ancestral pass, sid_noise the steps after the restart
+    lam=c['sampler'].get('lam') if restart else None,
+    restart_sampler=c['sampler'].get('restart_sampler') if restart else None,
+    sid_noise=sid_noise['type'] if sid_noise else None,
+    sid_noise_power=sid_noise.get('power') if sid_noise and sid_noise['type'] == 'cosine' else None,
     steps=c['sampler']['steps'],
     batch_size=c['loader']['eval_batch_size'],
     num_samples=len(s['text']),
@@ -130,8 +152,14 @@ EOF
 }
 
 echo "${SELECTED}" | while read -r index name ckpt sampler x0 sidx0; do
+  [ "${sampler}" = "ancestral_restart" ] && name="${name}_lam${LAM}"
   for steps in ${STEPS}; do
-    out="${SWEEP_DIR}/${name}_${NOISE_NAME}_steps${steps}"
+    case "${sampler}" in
+      sid) noise_name=$(sched_name "${SID_NOISE}" "${SID_NOISE_POWER}") ;;
+      ancestral_restart) noise_name="$(sched_name "${ANC_NOISE}" "${ANC_NOISE_POWER}")+$(sched_name "${SID_NOISE}" "${SID_NOISE_POWER}")" ;;
+      *) noise_name=$(sched_name "${ANC_NOISE}" "${ANC_NOISE_POWER}") ;;
+    esac
+    out="${SWEEP_DIR}/${name}_${noise_name}_steps${steps}"
     if [ -f "${out}/samples.json" ] && [ -f "${out}/samples_greedy.json" ]; then
       echo "=== ${name} steps ${steps}: already done, skipped"
       continue

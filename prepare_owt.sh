@@ -17,9 +17,9 @@
 # Disk: roughly 250 GB in CACHE_DIR at the end (raw arrow, intermediate map caches and
 # the final .dat files); only the two *_wrapped.dat directories are needed for training.
 
-CACHE_DIR="${CACHE_DIR:-${HOME}/scratch/data_cache}"
-HF_HOME="${HF_HOME:-${CACHE_DIR}/hf}"   # raw download (not the default ~/.cache)
-NUM_PROC="${NUM_PROC:-${SLURM_CPUS_PER_TASK:-32}}"
+CACHE_DIR="${HOME}/scratch/data_cache"
+HF_HOME="${CACHE_DIR}/hf"   # raw download (not the default ~/.cache)
+NUM_PROC="${SLURM_CPUS_PER_TASK:-32}"
 
 mkdir -p "${CACHE_DIR}" "${HF_HOME}"
 # ~/scratch is a link to /srv/beegfs/scratch/...: use the real paths and bind them, since
