@@ -93,7 +93,7 @@ sample() {  # name ckpt sampler x0_param sid_x0_param steps output_dir
       ++sampler.sid_x0_param="$5" \
       sampler.steps="$6" \
       sampler.num_sample_batches="${NUM_BATCHES}" \
-      sampler.temperature=0.7 \
+      sampler.temperature=0.8 \
       ++sampler.ancestral_noise.type="${ANC_NOISE}" \
       ++sampler.ancestral_noise.power="${ANC_NOISE_POWER}" \
       ++sampler.sid_noise.type="${SID_NOISE}" \
