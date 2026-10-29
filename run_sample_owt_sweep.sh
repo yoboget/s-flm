@@ -15,7 +15,8 @@
 #   duo         + sid        (DUO x_theta converted to p(x0 | xt): sid_x0_param=elbo)
 #   ce_denoiser + sid        (cross-entropy model, its output is already p(x0 | xt))
 #   duo         + ancestral  (DUO x_theta used as is: x0_param=elbo)
-# and every number of steps in STEPS.
+# and every number of steps in STEPS. Each run decodes the last step twice from the same state:
+# sampled (noise_removal=ancestral) and argmax (greedy), each scored on its own.
 # Checkpoints: checkpoints/owt/duo.ckpt and checkpoints/owt/ce_denoiser.ckpt.
 # Run from the repo root: `mkdir -p sbatch && sbatch run_sample_owt_sweep.sh` submits the three
 # configurations as array tasks 0, 1, 2 (one GPU each, in parallel if GPUs are free). One only:
@@ -23,10 +24,12 @@
 # (CONFIG is the index or the name, e.g. CONFIG=ce_denoiser_sid).
 # Override e.g. with `STEPS="32 64" sbatch run_sample_owt_sweep.sh`
 # Results:
-#   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples.json  (texts + metrics, one per run)
-#   ${SWEEP_DIR}/summary.json  (metrics only, every run of every configuration found in SWEEP_DIR;
+#   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples.json  (texts + metrics, sampled last step)
+#   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples_greedy.json  (same, argmax last step)
+#   ${SWEEP_DIR}/summary.json  (metrics only, both last steps of every run found in SWEEP_DIR;
 #   rebuilt after each run, by whichever task finishes it)
-# A run whose samples.json already exists is skipped, so resubmitting the job resumes the sweep.
+# A run whose samples.json and samples_greedy.json already exist is skipped, so resubmitting the
+# job resumes the sweep.
 
 STEPS="${STEPS:-32 64 128 256}"        # space-separated numbers of sampling steps
 BATCH_SIZE=8                           # 16 runs out of memory on a 24 GB GPU
@@ -65,6 +68,7 @@ sample() {  # name ckpt sampler x0_param sid_x0_param steps output_dir
       eval.perplexity_batch_size="${PPL_BATCH_SIZE}" \
       eval.results_json_path="$7/samples.json" \
       eval.entropy_every="${ENTROPY_EVERY}" \
+      ++eval.also_greedy=True \
       data=openwebtext-split \
       data.cache_dir="${PWD}/data_cache" \
       model=small \
@@ -89,12 +93,13 @@ summarize() {
 import glob, json, os, sys
 sweep_dir = sys.argv[1]
 runs = []
-for path in sorted(glob.glob(os.path.join(sweep_dir, '*', 'samples.json'))):
+for path in sorted(glob.glob(os.path.join(sweep_dir, '*', 'samples*.json'))):
   with open(path) as f:
     s = json.load(f)
   c = s['config']
   runs.append(dict(
     run=os.path.basename(os.path.dirname(path)),
+    last_step='greedy' if path.endswith('_greedy.json') else 'sample',
     checkpoint=s['ckpt_name'],
     sampler=c['sampler']['predictor'],
     x0_param=c['sampler'].get('x0_param'),
@@ -105,6 +110,7 @@ for path in sorted(glob.glob(os.path.join(sweep_dir, '*', 'samples.json'))):
     num_samples=len(s['text']),
     gen_ppl=s['gen_ppl_first_chunk_retok'],
     entropy=s['entropy'],
+    frac_tokens_changed=s.get('frac_tokens_changed'),  # greedy: vs the sampled last step
     avg_nfe=s['avg_nfe'],
     entropy_trajectory=s.get('entropy_trajectory')))
 # The array tasks share the summary: write a temporary file and rename it (atomic), so a reader
@@ -114,14 +120,14 @@ with open(tmp, 'w') as f:
   json.dump(runs, f, indent=2)
 os.replace(tmp, os.path.join(sweep_dir, 'summary.json'))
 for r in runs:
-  print(f"{r['run']:45s} gen_ppl {r['gen_ppl']:9.2f}  entropy {r['entropy']:.3f}  n {r['num_samples']}")
+  print(f"{r['run']:45s} {r['last_step']:6s} gen_ppl {r['gen_ppl']:9.2f}  entropy {r['entropy']:.3f}  n {r['num_samples']}")
 EOF
 }
 
 echo "${SELECTED}" | while read -r index name ckpt sampler x0 sidx0; do
   for steps in ${STEPS}; do
     out="${SWEEP_DIR}/${name}_${NOISE}_steps${steps}"
-    if [ -f "${out}/samples.json" ]; then
+    if [ -f "${out}/samples.json" ] && [ -f "${out}/samples_greedy.json" ]; then
       echo "=== ${name} steps ${steps}: already done, skipped"
       continue
     fi

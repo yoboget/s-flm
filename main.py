@@ -217,15 +217,25 @@ def _generate_samples(diffusion_model, config, logger,
   model.to(fabric.device)
   if fabric.global_rank == 0:
     logger.info(f'Sampling {total_num_samples} samples.')
+  # eval.also_greedy: the last step is also decoded with argmax, from
+  # the same state, scored and saved apart (<results>_greedy.json)
+  also_greedy = config.eval.get('also_greedy', False)
   all_text_samples = []
   all_np_samples = []
+  all_greedy_samples = []
   total_nfe = 0
   for _ in trange(num_batch_per_device, desc=f'Sampling '
                   f'({config.sampler.steps} steps)',
                   disable=fabric.global_rank != 0):
     samples, metadata = model.restore_model_and_sample(
-      num_steps=config.sampler.steps, on_step=entropy_trajectory)
+      num_steps=config.sampler.steps, on_step=entropy_trajectory,
+      also_greedy=also_greedy)
     total_nfe += metadata['nfe']
+    if also_greedy:
+      greedy_samples = fabric.all_gather(metadata['xt_greedy'])
+      if fabric.world_size > 1:
+        greedy_samples = greedy_samples.flatten(0, 1)
+      all_greedy_samples.append(greedy_samples.cpu())
     samples = fabric.all_gather(samples)
     if fabric.world_size > 1:
       samples = samples.flatten(0, 1)
@@ -286,6 +296,38 @@ def _generate_samples(diffusion_model, config, logger,
     with fsspec.open(samples_path, 'w') as f:
       json.dump(save_dict, f, indent=4)
     print('Samples saved at:', samples_path)
+
+    if also_greedy:
+      greedy_tokens = torch.cat(all_greedy_samples)
+      greedy_text = model.tokenizer.batch_decode(greedy_tokens)
+      model.metrics.sample_entropy.reset()
+      model.metrics.record_entropy(greedy_tokens)
+      model.metrics.record_generative_perplexity(
+        greedy_text,
+        config.model.length,
+        retokenize=True,
+        first_chunk_only=True,
+        device=model.device)
+      greedy_gen_ppl = model.metrics.gen_ppl.compute().item()
+      model.metrics.gen_ppl.reset()
+      greedy_entropy = model.metrics.sample_entropy.compute().item()
+      logger.info('Greedy last step: generative perplexity (retokenize, '
+                  f'first chunk only): {greedy_gen_ppl:.5f}')
+      logger.info(f'Greedy last step: sample entropy: {greedy_entropy:.5f}')
+      greedy_dict = dict(save_dict)
+      greedy_dict.update(
+        text=greedy_text,
+        np_tokens_b64=utils.np_to_base64(greedy_tokens.numpy()),
+        gen_ppl_first_chunk_retok=greedy_gen_ppl,
+        entropy=greedy_entropy,
+        noise_removal='greedy',
+        # Fraction of the tokens that differ from the sampled last step
+        frac_tokens_changed=(greedy_tokens.numpy()
+                             != all_np_samples).mean().item())
+      greedy_path = os.path.splitext(samples_path)[0] + '_greedy.json'
+      with fsspec.open(greedy_path, 'w') as f:
+        json.dump(greedy_dict, f, indent=4)
+      print('Greedy samples saved at:', greedy_path)
   fabric.barrier()
 
 

@@ -11,6 +11,7 @@ Content:
 """
 
 import abc
+import copy
 import torch
 import torch.nn.functional as F
 from dataclass_patch import dataclass
@@ -1334,21 +1335,43 @@ class CANDISampler(Sampler):
 
 def run_sampler(sampler, model, num_samples, *,
                num_steps=None, eps=1e-5, prefix_tokens=None,
-               prefix_lengths=None, on_step=None):
+               prefix_lengths=None, on_step=None, also_greedy=False):
   """on_step: optional callback on the state, called on the initial
-  state and after each step (ancestral / sid / dfm samplers only)."""
+  state and after each step (ancestral / sid / dfm samplers only).
+  also_greedy: also decode the last step with noise_removal=greedy
+  (argmax), from the same state before that step, returned as
+  metadata['xt_greedy'] (ancestral / sid / dfm samplers only). The
+  steps before are shared, so the two samples differ only by the last
+  step; it costs one more denoiser call per batch (not in the nfe)."""
   state = sampler.init_state(model, num_samples,
                              num_steps=num_steps, eps=eps,
                              prefix_tokens=prefix_tokens,
                              prefix_lengths=prefix_lengths)
+  if also_greedy:
+    assert isinstance(state, AncestralState), \
+      'also_greedy: ancestral / sid / dfm samplers only'
   if on_step is not None:
     state.track_x0 = True
     on_step(state)
+  before_last = None
   while not state.done:
+    if also_greedy:
+      # The step modifies xt in place
+      before_last = copy.copy(state)
+      before_last.xt = state.xt.clone()
     state = sampler.step(model, state)
     if on_step is not None:
       on_step(state)
-  return state.xt, sampler.metadata(state)
+  metadata = sampler.metadata(state)
+  if also_greedy:
+    noise_removal = sampler.noise_removal
+    sampler.noise_removal = 'greedy'
+    try:
+      before_last.track_x0 = False
+      metadata['xt_greedy'] = sampler.step(model, before_last).xt
+    finally:
+      sampler.noise_removal = noise_removal
+  return state.xt, metadata
 
 
 # Samplers built on AncestralSampler (support eval.entropy_every)
