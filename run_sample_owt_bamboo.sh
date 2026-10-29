@@ -32,20 +32,34 @@ case "${CKPT_PATH}" in
   /*) ;;
   *) CKPT_PATH="${PWD}/${CKPT_PATH}" ;;
 esac
-SAMPLER="${SAMPLER:-sid}"       # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral
+SAMPLER="${SAMPLER:-ancestral}"       # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral
 RHO="${RHO:-0.1}"                     # sid_partial: proportion of the positions resampled at each step
 LAM="${LAM:-0.8}"                    # ancestral_restart: proportion of the steps of the ancestral pass (restart at t = 1 - LAM)
+X0_PARAM="${X0_PARAM:-elbo}"        # ancestral / ancestral_sid / ancestral_restart: elbo (DUO checkpoint) / posterior (cross-entropy finetuned checkpoint)
+SID_X0_PARAM="${SID_X0_PARAM:-posterior}"  # sid steps (sid / sid_partial / ancestral_sid / ancestral_restart): posterior (output used as p(x0 | xt)) / elbo (DUO x_theta converted to p(x0 | xt))
 STEPS="${STEPS:-128}"                  # number of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-8}"
 NUM_BATCHES="${NUM_BATCHES:-4}"       # total samples = NUM_BATCHES * BATCH_SIZE
 NOISE="${NOISE:-log-linear}"          # log-linear / cosine-squared
+NOISE_POWER="${NOISE_POWER:-2}"       # cosine-squared only: alpha_t = cos(pi/2 t)^NOISE_POWER (< 2 more steps near the data, > 2 near the noise)
+RESTART_ALPHA="${RESTART_ALPHA:-}"    # ancestral_restart: restart at this alpha instead of t = 1 - LAM (empty: 1 - LAM)
 ENTROPY_EVERY="${ENTROPY_EVERY:-0.1}"  # entropy of xt and x0 every 10% of the steps (null to disable)
 SAMPLER_NAME="${SAMPLER}"
 [ "${SAMPLER}" = "sid_partial" ] && SAMPLER_NAME="${SAMPLER}_rho${RHO}"
 [ "${SAMPLER}" = "ancestral_restart" ] && SAMPLER_NAME="${SAMPLER}_lam${LAM}"
-OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/owt/ce_denoiser_${SAMPLER_NAME}_${NOISE}_steps${STEPS}}"
+[ "${X0_PARAM}" = "posterior" ] && SAMPLER_NAME="${SAMPLER_NAME}_x0post"
+case "${SAMPLER}" in
+  sid|sid_partial|ancestral_sid|ancestral_restart)
+    [ "${SID_X0_PARAM}" = "elbo" ] && SAMPLER_NAME="${SAMPLER_NAME}_sidelbo" ;;
+esac
+[ "${SAMPLER}" = "ancestral_restart" ] && [ -n "${RESTART_ALPHA}" ] && SAMPLER_NAME="${SAMPLER_NAME}_ra${RESTART_ALPHA}"
+NOISE_NAME="${NOISE}"
+[ "${NOISE}" = "cosine-squared" ] && NOISE_NAME="cosine-p${NOISE_POWER}"
+OUTPUT_DIR="${OUTPUT_DIR:-${PWD}/eval_runs/owt/ce_denoiser_${SAMPLER_NAME}_${NOISE_NAME}_steps${STEPS}}"
 [ "${SAMPLER}" = "sid_partial" ] && SAMPLER_ARGS="sampler.rho=${RHO}"
 [ "${SAMPLER}" = "ancestral_restart" ] && SAMPLER_ARGS="sampler.lam=${LAM}"
+[ "${SAMPLER}" = "ancestral_restart" ] && [ -n "${RESTART_ALPHA}" ] && SAMPLER_ARGS="${SAMPLER_ARGS} sampler.restart_alpha=${RESTART_ALPHA}"
+[ "${NOISE}" = "cosine-squared" ] && NOISE_ARGS="noise.power=${NOISE_POWER}"
 
 apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1 sfm.sif \
     python -u -m main \
@@ -59,10 +73,12 @@ apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_ONLY_L
     model=small \
     algo=duo-base \
     sampler="${SAMPLER}" ${SAMPLER_ARGS} \
+    ++sampler.x0_param="${X0_PARAM}" \
+    ++sampler.sid_x0_param="${SID_X0_PARAM}" \
     sampler.steps="${STEPS}" \
     sampler.num_sample_batches="${NUM_BATCHES}" \
     sampler.temperature=1 \
-    noise="${NOISE}" \
+    noise="${NOISE}" ${NOISE_ARGS} \
     loader.eval_batch_size="${BATCH_SIZE}" \
     loader.num_workers=4 \
     trainer.num_nodes=1 \

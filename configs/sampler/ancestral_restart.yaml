@@ -1,9 +1,12 @@
 # Ancestral denoising in a proportion lam of the steps, then noised again to t = 1 - lam and denoised with sid in the remaining steps (MDLM / DUO)
 predictor: ancestral_restart
 lam: 0.75              # proportion of the steps of the ancestral pass; restart time 1 - lam (1: ancestral, 0: sid)
+restart_alpha: null    # restart at this noise level alpha instead of t = 1 - lam (same alpha whatever the noise schedule)
 steps: 1024
 steps_policy: full      # full: use steps as-is / proportional: steps * num_tokens_to_generate
 noise_removal: ancestral  # ancestral (sample) / greedy (argmax) at the final step
+sid_x0_param: posterior  # sid steps, uniform diffusion: posterior (use the output as p(x0 | xt)) / elbo (DUO x_theta, converted to p(x0 | xt))
+x0_param: elbo           # uniform diffusion: elbo (DUO, loss_weighting=elbo) / posterior (p(x0 | xt), loss_weighting=none)
 use_float64: true
 p_nucleus: 1.0
 temperature: 1.0

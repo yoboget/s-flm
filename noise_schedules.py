@@ -33,20 +33,26 @@ class NoiseSchedule(torch.nn.Module, abc.ABC):
 
 
 class CosineSquared(NoiseSchedule):
-  """alpha_t = (1 - cos^2(pi/2 * (1-t)))"""
-  def __init__(self, eps):
+  """alpha_t = cos(pi/2 * t)^power = sin(pi/2 * (1-t))^power; power = 2
+  is cosine-squared. Steps uniform in t spend more of them near the
+  data (alpha ~ 1) for power < 2, near the noise (alpha ~ 0) for
+  power > 2."""
+  def __init__(self, eps, power=2.0):
     super().__init__()
     self.eps = eps
+    self.power = power
     self.half_pi = torch.pi / 2
 
   def alpha_t(self, t):
     angle = self.half_pi * (1 - t)
-    base_alpha = torch.sin(angle) ** 2
+    base_alpha = torch.sin(angle) ** self.power
     return self.eps + (1 - self.eps) * base_alpha
 
   def alpha_prime_t(self, t):
     angle = self.half_pi * (1 - t)
-    return (-(1 - self.eps) * 2 * torch.sin(angle)
+    # clamp: sin^(power - 1) diverges at t = 1 for power < 1
+    sin = torch.sin(angle).clamp(min=1e-6)
+    return (-(1 - self.eps) * self.power * sin ** (self.power - 1)
             * torch.cos(angle) * self.half_pi)
 
 
@@ -260,7 +266,8 @@ def get_noise(config):
   if noise_config.type == 'log-linear':
     noise = LogLinear(noise_config.eps)
   elif noise_config.type == 'cosine-squared':
-    noise = CosineSquared(noise_config.eps)
+    noise = CosineSquared(noise_config.eps,
+                          getattr(noise_config, 'power', 2.0))
   else:
     raise ValueError(f'Unknown noise type: {noise_config.type}')
 

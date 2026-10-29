@@ -239,6 +239,49 @@ def _decode_posterior_tokens(
     noise_removal_step=noise_removal_step)
 
 
+def _xt_log_ratio(alpha_t, vocab_size):
+  """log (1 - alpha_t) / (alpha_t V + 1 - alpha_t): log q(xt | x0) at
+  x0 != xt minus at x0 = xt, uniform diffusion; alpha_t (B, 1)."""
+  return (torch.log1p(-alpha_t)
+          - torch.log(alpha_t * vocab_size + 1 - alpha_t))
+
+
+def _reweight_xt(log_probs, xt, log_ratio):
+  """Adds log_ratio (B, 1) to the xt entry of log_probs (B, L, V) and
+  renormalizes."""
+  log_probs = log_probs.scatter_add(
+    -1, xt[..., None],
+    log_ratio.to(log_probs.dtype)[..., None].expand(
+      *xt.shape, 1).contiguous())
+  return log_probs.log_softmax(-1)
+
+
+def _posterior_to_elbo_x0(log_probs, xt, alpha_t, vocab_size):
+  """sampler.x0_param='posterior', uniform diffusion: maps a denoiser
+  trained to output p(x0 | xt) (algo.loss_weighting=none) to the x0
+  that the DUO posterior plugs in, x_theta ∝ p(x0 | xt) / q(xt | x0),
+  for which q(x_s | x_t, x0 = x_theta) is the exact marginal
+  sum_x0 p(x0 | xt) q(x_s | x_t, x0). q(xt | x0) is alpha_t + (1 -
+  alpha_t) / V at x0 = xt and (1 - alpha_t) / V elsewhere, so only the
+  xt entry is reweighted, by (1 - alpha_t) / (alpha_t V + 1 - alpha_t).
+  log_probs (B, L, V), xt (B, L), alpha_t (B, 1)."""
+  return _reweight_xt(log_probs, xt,
+                      _xt_log_ratio(alpha_t.to(log_probs.dtype),
+                                    vocab_size))
+
+
+def _elbo_to_posterior_x0(log_probs, xt, alpha_t, vocab_size):
+  """sampler.sid_x0_param='elbo', uniform diffusion: the inverse of
+  _posterior_to_elbo_x0, p(x0 | xt) ∝ x_theta q(xt | x0) from the DUO
+  x_theta (algo.loss_weighting=elbo): the xt entry is reweighted by
+  (alpha_t V + 1 - alpha_t) / (1 - alpha_t). Exact at the ELBO optimum
+  only; the reweighting grows like alpha_t V / (1 - alpha_t), so it
+  also amplifies the errors of x_theta at xt at low noise."""
+  return _reweight_xt(log_probs, xt,
+                      -_xt_log_ratio(alpha_t.to(log_probs.dtype),
+                                     vocab_size))
+
+
 def _decode_ancestral_update(
     sampler, model, log_probs, current_tokens, alpha_s, alpha_t, *,
     is_last_step):
@@ -253,6 +296,10 @@ def _decode_ancestral_update(
   """
   if is_last_step and sampler.noise_removal == 'greedy':
     return log_probs.argmax(dim=-1)
+  if (getattr(sampler, 'x0_param', 'elbo') == 'posterior'
+      and model.diffusion_type == 'uniform'):
+    log_probs = _posterior_to_elbo_x0(
+      log_probs, current_tokens, alpha_t, model.vocab_size)
   return _decode_posterior_tokens(
     model, log_probs, current_tokens, alpha_s, alpha_t,
     greedy=False,
@@ -376,9 +423,20 @@ class AncestralSampler(Sampler):
 
   def __init__(self, use_float64=False,
                noise_removal='ancestral', steps_policy='full',
-               temperature=1.0, hyp_selection='sample'):
+               temperature=1.0, hyp_selection='sample',
+               x0_param='elbo', sid_x0_param='posterior'):
     self.use_float64 = use_float64
     self.noise_removal = noise_removal
+    # Uniform diffusion: what the denoiser outputs, the DUO x_theta
+    # ('elbo', algo.loss_weighting=elbo) or p(x0 | xt) ('posterior',
+    # loss_weighting=none), converted for the ancestral kernel
+    self.x0_param = x0_param
+    # Same for the x0 ~ p(x0 | xt) of the sid steps (sid, sid_partial,
+    # ancestral_sid, ancestral_restart): 'posterior' uses the output as
+    # is, 'elbo' converts the DUO x_theta to p(x0 | xt)
+    self.sid_x0_param = sid_x0_param
+    assert x0_param in ('elbo', 'posterior')
+    assert sid_x0_param in ('elbo', 'posterior')
     self.steps_policy = steps_policy
     self.temperature = temperature
     # Multi-mode denoiser only, see modes.py
@@ -472,9 +530,14 @@ class SIDSampler(AncestralSampler):
   the denoiser prediction p(x0 | xt), then noise it again to the next
   (lower) noise level, x_s ~ q(x_s | x0). Works for MDLM & DUO."""
 
-  def _sid_update(self, model, log_probs, alpha_s, is_last_step):
+  def _sid_update(self, model, log_probs, xt, alpha_t, alpha_s,
+                  is_last_step):
     """x0 ~ p(x0 | xt) on the window, noised to x_s ~ q(x_s | x0)
-    (except at the last step)."""
+    (except at the last step). xt: the current tokens of the window."""
+    if (self.sid_x0_param == 'elbo'
+        and model.diffusion_type == 'uniform'):
+      log_probs = _elbo_to_posterior_x0(
+        log_probs, xt, alpha_t, model.vocab_size)
     x0 = _decode_direct_tokens(
       log_probs,
       greedy=is_last_step and self.noise_removal == 'greedy')
@@ -483,12 +546,13 @@ class SIDSampler(AncestralSampler):
     return x0
 
   def step(self, model, state):
-    log_probs, _, alpha_s, is_last_step = self._predict_x0(
+    log_probs, alpha_t, alpha_s, is_last_step = self._predict_x0(
       model, state)
 
     current_tokens = state.xt[:, state.start_idx:]
     current_tokens[:] = self._sid_update(
-      model, log_probs[:, state.start_idx:], alpha_s, is_last_step)
+      model, log_probs[:, state.start_idx:], current_tokens,
+      alpha_t, alpha_s, is_last_step)
 
     return self._end_step(state, is_last_step)
 
@@ -508,12 +572,13 @@ class PartialSIDSampler(SIDSampler):
     self.rho = rho
 
   def step(self, model, state):
-    log_probs, _, alpha_s, is_last_step = self._predict_x0(
+    log_probs, alpha_t, alpha_s, is_last_step = self._predict_x0(
       model, state)
 
     current_tokens = state.xt[:, state.start_idx:]
     proposal = self._sid_update(
-      model, log_probs[:, state.start_idx:], alpha_s, is_last_step)
+      model, log_probs[:, state.start_idx:], current_tokens,
+      alpha_t, alpha_s, is_last_step)
     if is_last_step:
       current_tokens[:] = proposal
     else:
@@ -546,8 +611,8 @@ class AncestralSIDSampler(SIDSampler):
     ancestral = _decode_ancestral_update(
       self, model, log_probs_window, current_tokens,
       alpha_s, alpha_t, is_last_step=is_last_step)
-    sid = self._sid_update(model, log_probs_window, alpha_s,
-                           is_last_step)
+    sid = self._sid_update(model, log_probs_window, current_tokens,
+                           alpha_t, alpha_s, is_last_step)
     t = state.timesteps[state.step_idx]
     use_ancestral = torch.rand(current_tokens.shape,
                                device=current_tokens.device) < t
@@ -589,13 +654,33 @@ class AncestralRestartSampler(SIDSampler):
   t = 1 to the data; the sample is then noised again to t = 1 - lam,
   x ~ q(x_{1 - lam} | x0), and denoised with sid in the remaining
   steps. lam = 1 is ancestral; lam = 0 is sid.
+  restart_alpha, if set, gives the restart noise level as alpha instead
+  of 1 - lam (the time is found by inverting the noise schedule), so
+  that it does not move with the schedule; lam then only sets the
+  split of the steps.
   state.timesteps[i] is the time of the state before step i (the
-  restart time 1 - lam for i = restart_idx)."""
+  restart time for i = restart_idx)."""
 
-  def __init__(self, lam=0.75, **kwargs):
+  def __init__(self, lam=0.75, restart_alpha=None, **kwargs):
     super().__init__(**kwargs)
     assert 0 <= lam <= 1
+    assert restart_alpha is None or 0 < restart_alpha < 1
     self.lam = lam
+    self.restart_alpha = restart_alpha
+
+  def _restart_time(self, model, eps):
+    """Time of the restart: 1 - lam, or the t with alpha_t =
+    restart_alpha (bisection, alpha_t decreasing in t)."""
+    if self.restart_alpha is None:
+      return 1 - self.lam
+    lo = torch.tensor([eps], dtype=torch.float64, device=model.device)
+    hi = torch.ones_like(lo)
+    for _ in range(60):
+      mid = (lo + hi) / 2
+      above = model.noise(mid)[1] > self.restart_alpha
+      lo = torch.where(above, mid, lo)
+      hi = torch.where(above, hi, mid)
+    return float((lo + hi) / 2)
 
   def init_state(self, model, num_samples, *, num_steps=None,
                  eps=1e-5, **kwargs):
@@ -608,7 +693,8 @@ class AncestralRestartSampler(SIDSampler):
       device = state.timesteps.device
       state.timesteps = torch.cat([
         torch.linspace(1, eps, n_ancestral + 1, device=device)[:-1],
-        torch.linspace(1 - self.lam, eps, n_sid + 1, device=device)])
+        torch.linspace(self._restart_time(model, eps), eps,
+                       n_sid + 1, device=device)])
     state.restart_idx = n_ancestral
     return state
 
@@ -634,7 +720,8 @@ class AncestralRestartSampler(SIDSampler):
       current_tokens[:] = x
     else:
       current_tokens[:] = self._sid_update(
-        model, log_probs_window, alpha_s, is_last_step)
+        model, log_probs_window, current_tokens, alpha_t, alpha_s,
+        is_last_step)
 
     is_last_step = state.step_idx == len(state.timesteps) - 2
     return self._end_step(state, is_last_step)
@@ -1295,12 +1382,15 @@ def get_sampler(config):
       kwargs['rho'] = s.rho
     if s.predictor == 'ancestral_restart':
       kwargs['lam'] = s.lam
+      kwargs['restart_alpha'] = getattr(s, 'restart_alpha', None)
     return sampler_cls(
       use_float64=s.use_float64,
       noise_removal=s.noise_removal,
       steps_policy=s.steps_policy,
       temperature=s.temperature,
       hyp_selection=getattr(s, 'hyp_selection', 'sample'),
+      x0_param=getattr(s, 'x0_param', 'elbo'),
+      sid_x0_param=getattr(s, 'sid_x0_param', 'posterior'),
       **kwargs)
 
   if s.predictor == 'ar':

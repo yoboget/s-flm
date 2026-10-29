@@ -3,6 +3,7 @@ predictor: sid
 steps: 1024
 steps_policy: full      # full: use steps as-is / proportional: steps * num_tokens_to_generate
 noise_removal: ancestral  # ancestral (sample) / greedy (argmax) at the final step
+sid_x0_param: posterior  # sid steps, uniform diffusion: posterior (use the output as p(x0 | xt)) / elbo (DUO x_theta, converted to p(x0 | xt))
 use_float64: true
 p_nucleus: 1.0
 temperature: 1.0

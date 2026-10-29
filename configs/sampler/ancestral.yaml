@@ -3,6 +3,7 @@ predictor: ancestral
 steps: 1024
 steps_policy: full      # full: use steps as-is / proportional: steps * num_tokens_to_generate
 noise_removal: ancestral  # ancestral / greedy
+x0_param: elbo           # uniform diffusion: elbo (DUO, loss_weighting=elbo) / posterior (p(x0 | xt), loss_weighting=none)
 use_float64: true
 p_nucleus: 1.0
 temperature: 1.0
