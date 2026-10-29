@@ -19,7 +19,7 @@
 #                 x0_param=posterior; sid after the restart on the CE output as is, sid_x0_param=posterior)
 # and every number of steps in STEPS. Each run decodes the last step twice from the same state:
 # sampled (noise_removal=ancestral) and argmax (greedy), each scored on its own.
-# Checkpoints: checkpoints/owt/duo.ckpt and checkpoints/owt/ce_denoiser.ckpt.
+# Checkpoints: checkpoints/owt/duo.ckpt and checkpoints/owt/${CE_CKPT}.ckpt.
 # Run from the repo root: `mkdir -p sbatch && sbatch run_sample_owt_sweep.sh` submits the
 # configurations as array tasks 0, 1, 2, 3 (one GPU each, in parallel if GPUs are free). One only:
 # `sbatch --array=1 run_sample_owt_sweep.sh`; without Slurm, set CONFIG below (the index or the
@@ -46,14 +46,15 @@ LAM="0.6"                    # ancestral_restart: proportion of the steps of the
 sched_name() { if [ "$1" = "cosine" ]; then echo "cosine-p$2"; else echo "$1"; fi; }
 ENTROPY_EVERY="0.1"  # entropy of xt and x0 every 10% of the steps (null to disable)
 CKPT_DIR="${PWD}/checkpoints/owt"
-SWEEP_DIR="${PWD}/eval_runs/owt/sweep"
+CE_CKPT="ce_denoiser_step22000"           # cross-entropy checkpoint (file name in CKPT_DIR, without .ckpt); ce_denoiser: step 40000
+SWEEP_DIR="${PWD}/eval_runs/owt/sweep_ce_step22000"  # one folder (and summary.json) per CE checkpoint; eval_runs/owt/sweep: step 40000
 
 # index name checkpoint sampler x0_param sid_x0_param
 # ancestral_restart restarts with sid (restart_sampler=sid) at LAM; the run names get _lam<LAM>
 CONFIGS="0 duo_sid_sidelbo duo sid elbo elbo
-1 ce_denoiser_sid ce_denoiser sid posterior posterior
+1 ce_denoiser_sid ${CE_CKPT} sid posterior posterior
 2 duo_ancestral duo ancestral elbo posterior
-3 ce_denoiser_restart ce_denoiser ancestral_restart posterior posterior"
+3 ce_denoiser_restart ${CE_CKPT} ancestral_restart posterior posterior"
 CONFIG="${SLURM_ARRAY_TASK_ID}"        # the array task; without Slurm, set the index or the name here
 [ -n "${CONFIG}" ] || { echo "Set CONFIG (0, 1, 2, 3 or a name) or submit as an array job"; exit 1; }
 SELECTED=$(echo "${CONFIGS}" | awk -v c="${CONFIG}" '$1 == c || $2 == c')
@@ -139,6 +140,11 @@ for path in sorted(glob.glob(os.path.join(sweep_dir, '*', 'samples*.json'))):
     entropy=s['entropy'],
     frac_tokens_changed=s.get('frac_tokens_changed'),  # greedy: vs the sampled last step
     avg_nfe=s['avg_nfe'],
+    # Clock time of the sampling (seconds, same for both last steps; runs before the timing: None)
+    sampling_time_s=s.get('timing', {}).get('sampling_time_s'),
+    batch_time_mean_without_first_s=s.get('timing', {}).get('batch_time_mean_without_first_s'),
+    gpu_name=s.get('timing', {}).get('gpu_name'),
+    hostname=s.get('timing', {}).get('hostname'),
     entropy_trajectory=s.get('entropy_trajectory')))
 # The array tasks share the summary: write a temporary file and rename it (atomic), so a reader
 # never sees a half-written file; the last task to finish a run rewrites it with every run.

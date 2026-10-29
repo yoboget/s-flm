@@ -2,6 +2,7 @@ import gc
 import glob
 import json
 import os
+import socket
 import time
 
 import fsspec
@@ -172,6 +173,22 @@ class _EntropyTrajectory:
     return out
 
 
+def _device_info(device):
+  """Where the sampling ran, to compare clock times."""
+  info = dict(hostname=socket.gethostname(),
+              slurm_job_id=os.environ.get('SLURM_JOB_ID'),
+              device_type=torch.device(device).type,
+              torch_version=torch.__version__,
+              cuda_version=torch.version.cuda)
+  if torch.device(device).type == 'cuda':
+    props = torch.cuda.get_device_properties(device)
+    info.update(gpu_name=props.name,
+                gpu_compute_capability=f'{props.major}.{props.minor}',
+                gpu_memory_gb=round(props.total_memory / 2**30, 1),
+                gpu_count=torch.cuda.device_count())
+  return info
+
+
 @torch.no_grad
 def _generate_samples(diffusion_model, config, logger,
                       tokenizer):
@@ -224,12 +241,22 @@ def _generate_samples(diffusion_model, config, logger,
   all_np_samples = []
   all_greedy_samples = []
   total_nfe = 0
+  # Clock time of the sampling of each batch (seconds, GPU synchronized,
+  # without the gen. perplexity scoring and the greedy last step)
+  batch_times = []
+  greedy_time = 0.0
   for _ in trange(num_batch_per_device, desc=f'Sampling '
                   f'({config.sampler.steps} steps)',
                   disable=fabric.global_rank != 0):
+    samplers._synchronize(fabric.device)
+    start = time.perf_counter()
     samples, metadata = model.restore_model_and_sample(
       num_steps=config.sampler.steps, on_step=entropy_trajectory,
       also_greedy=also_greedy)
+    samplers._synchronize(fabric.device)
+    batch_greedy_time = metadata.get('greedy_time', 0.0)
+    batch_times.append(time.perf_counter() - start - batch_greedy_time)
+    greedy_time += batch_greedy_time
     total_nfe += metadata['nfe']
     if also_greedy:
       greedy_samples = fabric.all_gather(metadata['xt_greedy'])
@@ -267,6 +294,27 @@ def _generate_samples(diffusion_model, config, logger,
                f'chunk only): {gen_ppl_first_chunk_retok:.5f}')
     logger.info(f'Sample entropy: {entropy:.5f}')
     logger.info(f'Average NFE per batch: {avg_nfe:.1f}')
+    # Rank 0 batches. The first batch also compiles the sampler
+    # (torch.compile), hence the mean without it.
+    timing = dict(
+      sampling_time_s=sum(batch_times),
+      batch_times_s=batch_times,
+      batch_time_mean_s=sum(batch_times) / len(batch_times),
+      batch_time_mean_without_first_s=(
+        sum(batch_times[1:]) / (len(batch_times) - 1)
+        if len(batch_times) > 1 else None),
+      batch_size=config.loader.eval_batch_size,
+      greedy_last_step_time_s=greedy_time if also_greedy else None,
+      # eval.entropy_every adds an x0 draw and entropies at each step
+      includes_entropy_trajectory=entropy_trajectory is not None,
+      **_device_info(fabric.device))
+    logger.info(
+      f"Sampling clock time: {timing['sampling_time_s']:.1f} s "
+      f"({timing['batch_time_mean_s']:.2f} s per batch of "
+      f"{timing['batch_size']}, "
+      + ('-' if timing['batch_time_mean_without_first_s'] is None
+         else f"{timing['batch_time_mean_without_first_s']:.2f}")
+      + f" s without the first) on {timing.get('gpu_name', 'cpu')}")
     if config.eval.results_json_path is not None:
       samples_path = config.eval.results_json_path
     else:
@@ -283,7 +331,8 @@ def _generate_samples(diffusion_model, config, logger,
       ckpt_name=config.eval.checkpoint_path,
       config=omegaconf.OmegaConf.to_container(config,
                                               resolve=True),
-      avg_nfe=avg_nfe)
+      avg_nfe=avg_nfe,
+      timing=timing)
     if entropy_trajectory is not None:
       # Rank 0 batches only (when sampling on several devices)
       save_dict['entropy_trajectory'] = entropy_trajectory.summary()

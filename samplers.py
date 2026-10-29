@@ -12,6 +12,7 @@ Content:
 
 import abc
 import copy
+import time
 import torch
 import torch.nn.functional as F
 from dataclass_patch import dataclass
@@ -1397,6 +1398,12 @@ class CANDISampler(Sampler):
     return state
 
 
+def _synchronize(device):
+  """Waits for the GPU work, for clock timings."""
+  if torch.device(device).type == 'cuda':
+    torch.cuda.synchronize(device)
+
+
 def run_sampler(sampler, model, num_samples, *,
                num_steps=None, eps=1e-5, prefix_tokens=None,
                prefix_lengths=None, on_step=None, also_greedy=False):
@@ -1406,7 +1413,8 @@ def run_sampler(sampler, model, num_samples, *,
   (argmax), from the same state before that step, returned as
   metadata['xt_greedy'] (ancestral / sid / dfm samplers only). The
   steps before are shared, so the two samples differ only by the last
-  step; it costs one more denoiser call per batch (not in the nfe)."""
+  step; it costs one more denoiser call per batch (not in the nfe), whose
+  clock time is metadata['greedy_time'] (seconds)."""
   state = sampler.init_state(model, num_samples,
                              num_steps=num_steps, eps=eps,
                              prefix_tokens=prefix_tokens,
@@ -1430,11 +1438,15 @@ def run_sampler(sampler, model, num_samples, *,
   if also_greedy:
     noise_removal = sampler.noise_removal
     sampler.noise_removal = 'greedy'
+    _synchronize(model.device)
+    start = time.perf_counter()
     try:
       before_last.track_x0 = False
       metadata['xt_greedy'] = sampler.step(model, before_last).xt
     finally:
       sampler.noise_removal = noise_removal
+    _synchronize(model.device)
+    metadata['greedy_time'] = time.perf_counter() - start
   return state.xt, metadata
 
 
