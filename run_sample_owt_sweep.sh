@@ -8,7 +8,7 @@
 #SBATCH --mem=32000
 #SBATCH --partition public-gpu,shared-gpu
 
-#SBATCH --time 12:00:00
+#SBATCH --time 8:00:00
 
 # Sweep of the OWT sampling space, one configuration per array task: unconditional samples scored by generative
 # perplexity (gpt2-large) and sample entropy, for
