@@ -2,7 +2,7 @@
 #SBATCH --job-name owt-sweep
 #SBATCH --error sbatch/error.e%A_%a
 #SBATCH --output sbatch/out.o%A_%a
-#SBATCH --array=0-3
+#SBATCH --array=0-4
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
@@ -17,11 +17,12 @@
 #   duo         + ancestral  (DUO x_theta used as is: x0_param=elbo)
 #   ce_denoiser + ancestral_restart, LAM (ancestral pass on the CE output converted to x_theta,
 #                 x0_param=posterior; sid after the restart on the CE output as is, sid_x0_param=posterior)
+#   ce_denoiser + ancestral  (CE output converted to x_theta: x0_param=posterior; control of the restart)
 # and every number of steps in STEPS. Each run decodes the last step twice from the same state:
 # sampled (noise_removal=ancestral) and argmax (greedy), each scored on its own.
 # Checkpoints: checkpoints/owt/duo.ckpt and checkpoints/owt/${CE_CKPT}.ckpt.
 # Run from the repo root: `mkdir -p sbatch && sbatch run_sample_owt_sweep.sh` submits the
-# configurations as array tasks 0, 1, 2, 3 (one GPU each, in parallel if GPUs are free). One only:
+# configurations as array tasks 0, 1, 2, 3, 4 (one GPU each, in parallel if GPUs are free). One only:
 # `sbatch --array=1 run_sample_owt_sweep.sh`; without Slurm, set CONFIG below (the index or the
 # name, e.g. ce_denoiser_sid). Set the run in the settings below.
 # Results:
@@ -54,9 +55,10 @@ SWEEP_DIR="${PWD}/eval_runs/owt/sweep_ce_step22000"  # one folder (and summary.j
 CONFIGS="0 duo_sid_sidelbo duo sid elbo elbo
 1 ce_denoiser_sid ${CE_CKPT} sid posterior posterior
 2 duo_ancestral duo ancestral elbo posterior
-3 ce_denoiser_restart ${CE_CKPT} ancestral_restart posterior posterior"
+3 ce_denoiser_restart ${CE_CKPT} ancestral_restart posterior posterior
+4 ce_denoiser_ancestral ${CE_CKPT} ancestral posterior posterior"
 CONFIG="${SLURM_ARRAY_TASK_ID}"        # the array task; without Slurm, set the index or the name here
-[ -n "${CONFIG}" ] || { echo "Set CONFIG (0, 1, 2, 3 or a name) or submit as an array job"; exit 1; }
+[ -n "${CONFIG}" ] || { echo "Set CONFIG (0, 1, 2, 3, 4 or a name) or submit as an array job"; exit 1; }
 SELECTED=$(echo "${CONFIGS}" | awk -v c="${CONFIG}" '$1 == c || $2 == c')
 [ -n "${SELECTED}" ] || { echo "Unknown CONFIG ${CONFIG}"; exit 1; }
 
