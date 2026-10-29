@@ -42,7 +42,7 @@ ANC_NOISE="log-linear"      # schedule of the ancestral runs and of the ancestra
 ANC_NOISE_POWER="2"   # cosine only: alpha_t = cos(pi/2 t)^power (< 2 more steps near the data, > 2 near the noise)
 SID_NOISE="cosine"          # schedule of the sid runs and of the sid steps after the restart: log-linear / cosine
 SID_NOISE_POWER="0.5" # cosine only
-LAM="0.6"                    # ancestral_restart: proportion of the steps of the ancestral pass and restart noise level alpha
+LAM="0.7"                    # ancestral_restart: proportion of the steps of the ancestral pass and restart noise level alpha
 sched_name() { if [ "$1" = "cosine" ]; then echo "cosine-p$2"; else echo "$1"; fi; }
 ENTROPY_EVERY="0.1"  # entropy of xt and x0 every 10% of the steps (null to disable)
 CKPT_DIR="${PWD}/checkpoints/owt"
