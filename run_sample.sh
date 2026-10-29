@@ -42,6 +42,7 @@ X0_PARAM_DEFAULT=elbo
 [ "${LOSS_WEIGHTING}" = "none" ] && X0_PARAM_DEFAULT=posterior
 X0_PARAM="${X0_PARAM:-${X0_PARAM_DEFAULT}}"
 SID_X0_PARAM="${SID_X0_PARAM:-posterior}"  # sid steps (sid / sid_partial / ancestral_sid / ancestral_restart): posterior (output used as p(x0 | xt)) / elbo (DUO x_theta converted to p(x0 | xt))
+ALSO_GREEDY="${ALSO_GREEDY:-True}"     # also decode the last step with argmax, from the same state: results_greedy.json and summary.json[steps].greedy
 HYP_SELECTION="${HYP_SELECTION:-average}"  # NUM_MODES > 1: sample / average
 STEPS="${STEPS:-8,16,32,64,128}"      # comma-separated numbers of sampling steps
 NOISE="${NOISE:-log-linear}"          # sampling schedule; the denoiser only sees alpha_t, so it need not match the training
@@ -79,6 +80,7 @@ srun apptainer exec --nv --env WANDB_MODE=online --env TORCH_FORCE_NO_WEIGHTS_ON
     sampler="${SAMPLER}" ${SAMPLER_ARGS} \
     ++sampler.x0_param="${X0_PARAM}" \
     ++sampler.sid_x0_param="${SID_X0_PARAM}" \
+    ++eval.also_greedy="${ALSO_GREEDY}" \
     sudoku.steps_list="[${STEPS}]" \
     sampler.hyp_selection="${HYP_SELECTION}" \
     noise="${NOISE}" ${NOISE_ARGS} \

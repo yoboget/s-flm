@@ -31,6 +31,7 @@ case "${TRAIN_LOSS}" in
 esac
 X0_PARAM="${X0_PARAM:-${X0_PARAM_DEFAULT}}"
 SID_X0_PARAM="${SID_X0_PARAM:-posterior}"  # sid steps (sid / sid_partial / ancestral_sid / ancestral_restart): posterior (output used as p(x0 | xt)) / elbo (DUO x_theta converted to p(x0 | xt))
+ALSO_GREEDY="${ALSO_GREEDY:-True}"     # also decode the last step with argmax, from the same state: results_greedy.json and summary.json[steps].greedy
 HYP_SELECTION="${HYP_SELECTION:-sample}"  # NUM_MODES > 1: sample / average
 STEPS="${STEPS:-8, 16, 32, 64, 128}"      # comma-separated numbers of sampling steps
 BATCH_SIZE="${BATCH_SIZE:-256}"       # lower it if the GPU runs out of memory
@@ -77,6 +78,7 @@ ${RUN} -u -m main \
     sampler="${SAMPLER}" ${SAMPLER_ARGS} \
     ++sampler.x0_param="${X0_PARAM}" \
     ++sampler.sid_x0_param="${SID_X0_PARAM}" \
+    ++eval.also_greedy="${ALSO_GREEDY}" \
     sudoku.steps_list="[${STEPS}]" \
     sampler.hyp_selection="${HYP_SELECTION}" \
     noise="${NOISE}" ${NOISE_ARGS} \

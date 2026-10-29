@@ -680,8 +680,11 @@ def _sudoku_eval(diffusion_model, config, logger, tokenizer):
         model, dataset, tokenizer, fabric, config, logger,
         num_steps, output_dir)
     if results is not None:
-      summary[num_steps] = {k: v for k, v in results.items()
-                            if k != 'records'}
+      summary[num_steps] = _without_records(results['sample'])
+      if 'greedy' in results:
+        # eval.also_greedy: same runs, last step decoded with argmax
+        summary[num_steps]['greedy'] = _without_records(
+          results['greedy'])
 
   if fabric.global_rank == 0:
     summary_path = os.path.join(
@@ -692,19 +695,53 @@ def _sudoku_eval(diffusion_model, config, logger, tokenizer):
       logger.info('Unconditional sudoku summary (steps: valid grids '
                   '/ valid units / entropy):')
       for num_steps, r in summary.items():
-        logger.info(
-          f'  {num_steps:>5}: {r["valid_rate"] * 100:6.2f}% / '
-          f'{r["valid_unit_rate"] * 100:6.2f}% / '
-          f'{r["entropy"]:.3f}')
+        for name, rr in [('', r)] + (
+            [(' greedy', r['greedy'])] if 'greedy' in r else []):
+          logger.info(
+            f'  {num_steps:>5}{name}: {rr["valid_rate"] * 100:6.2f}% / '
+            f'{rr["valid_unit_rate"] * 100:6.2f}% / '
+            f'{rr["entropy"]:.3f}')
       logger.info(f'Summary saved to {summary_path}')
       return
     logger.info('Sudoku summary (steps: accuracy / cell / blank cell):')
     for num_steps, r in summary.items():
-      logger.info(
-        f'  {num_steps:>5}: {r["accuracy"] * 100:6.2f}% / '
-        f'{r["cell_accuracy"] * 100:6.2f}% / '
-        f'{r["blank_cell_accuracy"] * 100:6.2f}%')
+      for name, rr in [('', r)] + (
+          [(' greedy', r['greedy'])] if 'greedy' in r else []):
+        logger.info(
+          f'  {num_steps:>5}{name}: {rr["accuracy"] * 100:6.2f}% / '
+          f'{rr["cell_accuracy"] * 100:6.2f}% / '
+          f'{rr["blank_cell_accuracy"] * 100:6.2f}%')
     logger.info(f'Summary saved to {summary_path}')
+
+
+def _without_records(results):
+  return {k: v for k, v in results.items() if k != 'records'}
+
+
+def _greedy_suffix(variant):
+  """File name suffix of the results of a last step variant."""
+  return '' if variant == 'sample' else f'_{variant}'
+
+
+def _merge_rank_files(output_dir, world_size, variant):
+  """Loads the per-rank results of a variant, in rank order."""
+  merged = []
+  for r in range(world_size):
+    path = os.path.join(
+      output_dir, f'rank_{r:04d}{_greedy_suffix(variant)}.json')
+    with open(path) as f:
+      merged.append(json.load(f))
+  return merged
+
+
+def _frac_tokens_changed(variant_samples):
+  """eval.also_greedy: fraction of the generated tokens that the
+  greedy last step changes, compared to the sampled one."""
+  if 'greedy' not in variant_samples:
+    return None
+  sample = torch.cat(variant_samples['sample'])
+  greedy = torch.cat(variant_samples['greedy'])
+  return (sample != greedy).float().mean().item()
 
 
 def _sudoku_eval_steps(model, dataset, tokenizer, fabric, config,
@@ -721,7 +758,12 @@ def _sudoku_eval_steps(model, dataset, tokenizer, fabric, config,
   world_size = fabric.world_size
   local_indices = list(range(rank, len(dataset), world_size))
   batch_size = config.sudoku.batch_size
-  records = []
+  # eval.also_greedy: the last step is also decoded with argmax, from
+  # the same state, and scored apart (results_greedy.json)
+  variants = (['sample', 'greedy'] if config.eval.get('also_greedy')
+              else ['sample'])
+  records = {v: [] for v in variants}
+  generated_tokens = {v: [] for v in variants}
 
   for batch_start in trange(
       0, len(local_indices), batch_size,
@@ -737,75 +779,92 @@ def _sudoku_eval_steps(model, dataset, tokenizer, fabric, config,
     prefix_lengths = torch.full(
       (B,), prompt_len, device=fabric.device)
 
-    samples, _ = model.generate_samples(
+    samples, metadata = model.generate_samples(
       num_samples=B,
       num_steps=num_steps,
       prefix_tokens=prefix,
-      prefix_lengths=prefix_lengths)
+      prefix_lengths=prefix_lengths,
+      also_greedy='greedy' in variants)
+    variant_samples = {'sample': samples}
+    if 'greedy' in variants:
+      variant_samples['greedy'] = metadata['xt_greedy']
 
     gt = batch[:, prompt_len:]
-    generated = samples[:, prompt_len:].cpu()
-    correct = (generated == gt).all(dim=1)
     # The puzzle (after the first BOS) is aligned with the solution
     puzzle = batch[:, 1:1 + tokenizer.seq_len]
     is_cell = gt != tokenizer.row_separator_id
     is_blank = is_cell & (puzzle == tokenizer.empty_token_id)
-    cell_correct = (generated == gt) & is_cell
-    blank_correct = (generated == gt) & is_blank
+    for variant, variant_tokens in variant_samples.items():
+      generated = variant_tokens[:, prompt_len:].cpu()
+      generated_tokens[variant].append(generated)
+      correct = (generated == gt).all(dim=1)
+      cell_correct = (generated == gt) & is_cell
+      blank_correct = (generated == gt) & is_blank
 
-    for i, idx in enumerate(batch_indices):
-      records.append({
-        'generated': tokenizer.decode(generated[i]),
-        'ground_truth': tokenizer.decode(gt[i]),
-        'correct': correct[i].item(),
-        'num_cells_correct': cell_correct[i].sum().item(),
-        'num_blank_cells': is_blank[i].sum().item(),
-        'num_blank_cells_correct': blank_correct[i].sum().item(),
-      })
+      for i, idx in enumerate(batch_indices):
+        records[variant].append({
+          'generated': tokenizer.decode(generated[i]),
+          'ground_truth': tokenizer.decode(gt[i]),
+          'correct': correct[i].item(),
+          'num_cells_correct': cell_correct[i].sum().item(),
+          'num_blank_cells': is_blank[i].sum().item(),
+          'num_blank_cells_correct': blank_correct[i].sum().item(),
+        })
 
-    del samples
+    del samples, metadata, variant_samples
     gc.collect()
 
   # Save per-rank results and aggregate on rank 0
   os.makedirs(output_dir, exist_ok=True)
-  rank_path = os.path.join(output_dir, f'rank_{rank:04d}.json')
-  with open(rank_path, 'w') as f:
-    json.dump(records, f, indent=2)
+  frac_changed = _frac_tokens_changed(generated_tokens)
+  for variant in variants:
+    rank_path = os.path.join(
+      output_dir, f'rank_{rank:04d}{_greedy_suffix(variant)}.json')
+    with open(rank_path, 'w') as f:
+      json.dump({'records': records[variant],
+                 'frac_tokens_changed': frac_changed}, f, indent=2)
 
   fabric.barrier()
 
   results = None
   if fabric.global_rank == 0:
-    all_records = []
-    for r in range(world_size):
-      path = os.path.join(output_dir, f'rank_{r:04d}.json')
-      with open(path) as f:
-        all_records.extend(json.load(f))
-    num_correct = sum(r['correct'] for r in all_records)
-    total = len(all_records)
-    cell_accuracy = (sum(r['num_cells_correct'] for r in all_records)
-                     / (total * tokenizer.num_cells))
-    blank_cell_accuracy = (
-      sum(r['num_blank_cells_correct'] for r in all_records)
-      / max(sum(r['num_blank_cells'] for r in all_records), 1))
-    logger.info(
-      f'Sudoku accuracy ({num_steps} steps): {num_correct}/{total} '
-      f'({num_correct / total * 100:.2f}%), cell accuracy '
-      f'{cell_accuracy * 100:.2f}%, blank cell accuracy '
-      f'{blank_cell_accuracy * 100:.2f}%')
-    merged_path = os.path.join(output_dir, 'results.json')
-    results = {
-      'num_steps': num_steps,
-      'accuracy': num_correct / total,
-      'cell_accuracy': cell_accuracy,
-      'blank_cell_accuracy': blank_cell_accuracy,
-      'num_correct': num_correct,
-      'num_total': total,
-      'records': all_records,
-    }
-    with open(merged_path, 'w') as f:
-      json.dump(results, f, indent=2)
-    logger.info(f'Results saved to {merged_path}')
+    results = {}
+    for variant in variants:
+      rank_results = _merge_rank_files(output_dir, world_size, variant)
+      all_records = [rec for r in rank_results for rec in r['records']]
+      num_correct = sum(r['correct'] for r in all_records)
+      total = len(all_records)
+      cell_accuracy = (sum(r['num_cells_correct'] for r in all_records)
+                       / (total * tokenizer.num_cells))
+      blank_cell_accuracy = (
+        sum(r['num_blank_cells_correct'] for r in all_records)
+        / max(sum(r['num_blank_cells'] for r in all_records), 1))
+      name = '' if variant == 'sample' else ', greedy last step'
+      logger.info(
+        f'Sudoku accuracy ({num_steps} steps{name}): '
+        f'{num_correct}/{total} '
+        f'({num_correct / total * 100:.2f}%), cell accuracy '
+        f'{cell_accuracy * 100:.2f}%, blank cell accuracy '
+        f'{blank_cell_accuracy * 100:.2f}%')
+      merged_path = os.path.join(
+        output_dir, f'results{_greedy_suffix(variant)}.json')
+      results[variant] = {
+        'num_steps': num_steps,
+        'last_step': variant,
+        'accuracy': num_correct / total,
+        'cell_accuracy': cell_accuracy,
+        'blank_cell_accuracy': blank_cell_accuracy,
+        'num_correct': num_correct,
+        'num_total': total,
+      }
+      if variant == 'greedy':
+        # Mean over the ranks (same number of samples each, up to one)
+        results[variant]['frac_tokens_changed'] = sum(
+          r['frac_tokens_changed'] for r in rank_results) / world_size
+      results[variant]['records'] = all_records
+      with open(merged_path, 'w') as f:
+        json.dump(results[variant], f, indent=2)
+      logger.info(f'Results saved to {merged_path}')
 
   fabric.barrier()
   return results
@@ -860,98 +919,126 @@ def _sudoku_uncond_eval_steps(model, train_grids, tokenizer, fabric,
   trajectory = None
   if config.eval.get('entropy_every') is not None:
     trajectory = _EntropyTrajectory(model, config)
-  records = []
+  # eval.also_greedy: the last step is also decoded with argmax, from
+  # the same state, and scored apart (results_greedy.json)
+  variants = (['sample', 'greedy'] if config.eval.get('also_greedy')
+              else ['sample'])
+  records = {v: [] for v in variants}
+  generated_tokens = {v: [] for v in variants}
 
   for batch_start in trange(
       0, local_num, batch_size,
       desc=f'Unconditional sudoku ({num_steps} steps)',
       disable=rank != 0):
     B = min(batch_size, local_num - batch_start)
-    samples, _ = model.generate_samples(
-      num_samples=B, num_steps=num_steps, on_step=trajectory)
-    samples = samples.cpu()
-    for i in range(B):
-      ids = samples[i].tolist()
-      records.append({
-        'generated': tokenizer.decode(ids[1:]),
-        'entropy': _token_entropy(samples[i:i + 1]),
-        'in_train': tuple(ids) in train_grids,
-        **_check_sudoku_grid(ids, tokenizer),
-      })
-    del samples
+    samples, metadata = model.generate_samples(
+      num_samples=B, num_steps=num_steps, on_step=trajectory,
+      also_greedy='greedy' in variants)
+    variant_samples = {'sample': samples}
+    if 'greedy' in variants:
+      variant_samples['greedy'] = metadata['xt_greedy']
+    for variant, variant_tokens in variant_samples.items():
+      variant_tokens = variant_tokens.cpu()
+      generated_tokens[variant].append(variant_tokens)
+      for i in range(B):
+        ids = variant_tokens[i].tolist()
+        records[variant].append({
+          'generated': tokenizer.decode(ids[1:]),
+          'entropy': _token_entropy(variant_tokens[i:i + 1]),
+          'in_train': tuple(ids) in train_grids,
+          **_check_sudoku_grid(ids, tokenizer),
+        })
+    del samples, metadata, variant_samples
     gc.collect()
 
   # Save per-rank results and aggregate on rank 0
   os.makedirs(output_dir, exist_ok=True)
-  rank_path = os.path.join(output_dir, f'rank_{rank:04d}.json')
-  with open(rank_path, 'w') as f:
-    json.dump({'records': records,
-               'entropy_trajectory': (None if trajectory is None
-                                      else trajectory.summary())},
-              f, indent=2)
+  frac_changed = _frac_tokens_changed(generated_tokens)
+  for variant in variants:
+    rank_path = os.path.join(
+      output_dir, f'rank_{rank:04d}{_greedy_suffix(variant)}.json')
+    with open(rank_path, 'w') as f:
+      # The entropy trajectory is the one of the shared steps
+      json.dump({'records': records[variant],
+                 'frac_tokens_changed': frac_changed,
+                 'entropy_trajectory': (None if trajectory is None
+                                        else trajectory.summary())},
+                f, indent=2)
 
   fabric.barrier()
 
   results = None
   if rank == 0:
-    all_records = []
-    trajectories = []
-    for r in range(world_size):
-      path = os.path.join(output_dir, f'rank_{r:04d}.json')
-      with open(path) as f:
-        rank_results = json.load(f)
-      all_records.extend(rank_results['records'])
-      if rank_results['entropy_trajectory'] is not None:
-        trajectories.append(rank_results['entropy_trajectory'])
-    total = len(all_records)
-    valid = [r for r in all_records if r['valid']]
-    results = {
-      'num_steps': num_steps,
-      'num_samples': total,
-      'valid_rate': len(valid) / total,
-      'well_formed_rate': sum(
-        r['well_formed'] for r in all_records) / total,
-      'valid_unit_rate': sum(
-        r['num_valid_units'] for r in all_records) / (27 * total),
-      'mean_conflicts': sum(
-        r['num_conflicts'] for r in all_records) / total,
-      'num_distinct_valid': len({r['generated'] for r in valid}),
-      'memorized_rate': (sum(r['in_train'] for r in valid)
-                         / max(len(valid), 1)),
-      'entropy': sum(r['entropy'] for r in all_records) / total,
-      'reference_entropy': _token_entropy(
-        torch.tensor([next(iter(train_grids))])),
-    }
-    if trajectories:
-      # Average over the ranks, entry by entry (same steps)
-      results['entropy_trajectory'] = [
-        {k: (v if k in ('step', 'frac', 't') or v is None
-             else sum(t[j][k] for t in trajectories) / len(trajectories))
-         for k, v in entry.items()}
-        for j, entry in enumerate(trajectories[0])]
-    logger.info(
-      f'Unconditional sudoku ({num_steps} steps): '
-      f'{len(valid)}/{total} valid grids '
-      f'({results["valid_rate"] * 100:.2f}%), valid units '
-      f'{results["valid_unit_rate"] * 100:.2f}%, mean conflicts '
-      f'{results["mean_conflicts"]:.2f}, distinct valid '
-      f'{results["num_distinct_valid"]}, memorized '
-      f'{results["memorized_rate"] * 100:.2f}%, entropy '
-      f'{results["entropy"]:.3f} (valid grid: '
-      f'{results["reference_entropy"]:.3f})')
-    for e in results.get('entropy_trajectory', []):
-      logger.info(
-        f"  entropy at step {e['step']} (t={e['t']:.3f}): "
-        f"xt {e['xt_entropy']:.3f}, x0 "
-        + ('-' if e['x0_entropy'] is None
-           else f"{e['x0_entropy']:.3f}"))
-    results['records'] = all_records
-    merged_path = os.path.join(output_dir, 'results.json')
-    with open(merged_path, 'w') as f:
-      json.dump(results, f, indent=2)
-    logger.info(f'Results saved to {merged_path}')
+    results = {}
+    for variant in variants:
+      results[variant] = _sudoku_uncond_merge(
+        _merge_rank_files(output_dir, world_size, variant), variant,
+        train_grids, num_steps, output_dir, logger)
 
   fabric.barrier()
+  return results
+
+
+def _sudoku_uncond_merge(rank_results, variant, train_grids,
+                         num_steps, output_dir, logger):
+  """Aggregates the per-rank results of _sudoku_uncond_eval_steps for
+  one last step variant (sample / greedy) and saves them."""
+  all_records = [rec for r in rank_results for rec in r['records']]
+  trajectories = [r['entropy_trajectory'] for r in rank_results
+                  if r['entropy_trajectory'] is not None]
+  total = len(all_records)
+  valid = [r for r in all_records if r['valid']]
+  results = {
+    'num_steps': num_steps,
+    'last_step': variant,
+    'num_samples': total,
+    'valid_rate': len(valid) / total,
+    'well_formed_rate': sum(
+      r['well_formed'] for r in all_records) / total,
+    'valid_unit_rate': sum(
+      r['num_valid_units'] for r in all_records) / (27 * total),
+    'mean_conflicts': sum(
+      r['num_conflicts'] for r in all_records) / total,
+    'num_distinct_valid': len({r['generated'] for r in valid}),
+    'memorized_rate': (sum(r['in_train'] for r in valid)
+                       / max(len(valid), 1)),
+    'entropy': sum(r['entropy'] for r in all_records) / total,
+    'reference_entropy': _token_entropy(
+      torch.tensor([next(iter(train_grids))])),
+  }
+  if variant == 'greedy':
+    results['frac_tokens_changed'] = sum(
+      r['frac_tokens_changed'] for r in rank_results) / len(rank_results)
+  if trajectories:
+    # Average over the ranks, entry by entry (same steps)
+    results['entropy_trajectory'] = [
+      {k: (v if k in ('step', 'frac', 't') or v is None
+           else sum(t[j][k] for t in trajectories) / len(trajectories))
+       for k, v in entry.items()}
+      for j, entry in enumerate(trajectories[0])]
+  name = '' if variant == 'sample' else ', greedy last step'
+  logger.info(
+    f'Unconditional sudoku ({num_steps} steps{name}): '
+    f'{len(valid)}/{total} valid grids '
+    f'({results["valid_rate"] * 100:.2f}%), valid units '
+    f'{results["valid_unit_rate"] * 100:.2f}%, mean conflicts '
+    f'{results["mean_conflicts"]:.2f}, distinct valid '
+    f'{results["num_distinct_valid"]}, memorized '
+    f'{results["memorized_rate"] * 100:.2f}%, entropy '
+    f'{results["entropy"]:.3f} (valid grid: '
+    f'{results["reference_entropy"]:.3f})')
+  for e in results.get('entropy_trajectory', []):
+    logger.info(
+      f"  entropy at step {e['step']} (t={e['t']:.3f}): "
+      f"xt {e['xt_entropy']:.3f}, x0 "
+      + ('-' if e['x0_entropy'] is None
+         else f"{e['x0_entropy']:.3f}"))
+  results['records'] = all_records
+  merged_path = os.path.join(
+    output_dir, f'results{_greedy_suffix(variant)}.json')
+  with open(merged_path, 'w') as f:
+    json.dump(results, f, indent=2)
+  logger.info(f'Results saved to {merged_path}')
   return results
 
 

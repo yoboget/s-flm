@@ -19,7 +19,7 @@ TRAIN_RUN="${TRAIN_RUN:-sudoku_uncond_${ALGO}_M${NUM_MODES}_${HYP_LOSS}_${LOSS_W
 CKPT="${CKPT:-best}"                   # best (lowest val/nll) / last / e.g. 106-20000 (step checkpoint)
 CKPT_PATH="${CKPT_PATH:-${PWD}/outputs/sudoku/${TRAIN_RUN}/checkpoints/${CKPT}.ckpt}"
 
-SAMPLER="${SAMPLER:-sid}"             # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral (unsid: sid only)
+SAMPLER="${SAMPLER:-ancestral}"             # sid / sid_partial / ancestral_sid / ancestral_restart / dfm / ancestral (unsid: sid only)
 RHO="${RHO:-0.1}"                     # sid_partial: proportion of the positions resampled at each step
 LAM="${LAM:-0.75}"                    # ancestral_restart: proportion of the steps of the ancestral pass (restart at t = 1 - LAM)
 RESTART_ALPHA="${RESTART_ALPHA:-}"    # ancestral_restart: restart at this alpha instead of t = 1 - LAM (empty: 1 - LAM)
@@ -29,6 +29,7 @@ X0_PARAM_DEFAULT=elbo
 [ "${LOSS_WEIGHTING}" = "none" ] && X0_PARAM_DEFAULT=posterior
 X0_PARAM="${X0_PARAM:-${X0_PARAM_DEFAULT}}"
 SID_X0_PARAM="${SID_X0_PARAM:-posterior}"  # sid steps (sid / sid_partial / ancestral_sid / ancestral_restart): posterior (output used as p(x0 | xt)) / elbo (DUO x_theta converted to p(x0 | xt))
+ALSO_GREEDY="${ALSO_GREEDY:-True}"     # also decode the last step with argmax, from the same state: results_greedy.json and summary.json[steps].greedy
 HYP_SELECTION="${HYP_SELECTION:-sample}"  # NUM_MODES > 1: sample / average
 STEPS="${STEPS:-8,16,32,64,128}"      # comma-separated numbers of sampling steps
 NUM_SAMPLES="${NUM_SAMPLES:-1024}"    # grids generated for each number of steps
@@ -68,6 +69,7 @@ srun apptainer exec --nv --env WANDB_MODE=offline --env TORCH_FORCE_NO_WEIGHTS_O
     sampler="${SAMPLER}" ${SAMPLER_ARGS} \
     ++sampler.x0_param="${X0_PARAM}" \
     ++sampler.sid_x0_param="${SID_X0_PARAM}" \
+    ++eval.also_greedy="${ALSO_GREEDY}" \
     sampler.hyp_selection="${HYP_SELECTION}" \
     sudoku.steps_list="[${STEPS}]" \
     sudoku.num_samples="${NUM_SAMPLES}" \

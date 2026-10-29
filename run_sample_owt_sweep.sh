@@ -24,7 +24,8 @@
 # (CONFIG is the index or the name, e.g. CONFIG=ce_denoiser_sid).
 # Override e.g. with `STEPS="32 64" sbatch run_sample_owt_sweep.sh`
 # Results:
-#   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples.json  (texts + metrics, sampled last step)
+#   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples.json  (texts + metrics, sampled last step;
+#   <noise>: log-linear / cosine-p<power>)
 #   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples_greedy.json  (same, argmax last step)
 #   ${SWEEP_DIR}/summary.json  (metrics only, both last steps of every run found in SWEEP_DIR;
 #   rebuilt after each run, by whichever task finishes it)
@@ -35,7 +36,10 @@ STEPS="${STEPS:-32 64 128 256}"        # space-separated numbers of sampling ste
 BATCH_SIZE=8                           # 16 runs out of memory on a 24 GB GPU
 NUM_BATCHES=64                         # 512 samples = NUM_BATCHES * BATCH_SIZE
 PPL_BATCH_SIZE="${PPL_BATCH_SIZE:-8}"  # sequences scored at once by gpt2-large
-NOISE="${NOISE:-log-linear}"
+NOISE="${NOISE:-cosine-squared}"      # log-linear / cosine-squared
+NOISE_POWER="${NOISE_POWER:-0.5}"       # cosine-squared only: alpha_t = cos(pi/2 t)^NOISE_POWER (< 2 more steps near the data, > 2 near the noise)
+NOISE_NAME="${NOISE}"
+[ "${NOISE}" = "cosine-squared" ] && NOISE_NAME="cosine-p${NOISE_POWER}" && NOISE_ARGS="noise.power=${NOISE_POWER}"
 ENTROPY_EVERY="${ENTROPY_EVERY:-0.1}"  # entropy of xt and x0 every 10% of the steps (null to disable)
 CKPT_DIR="${CKPT_DIR:-${PWD}/checkpoints/owt}"
 SWEEP_DIR="${SWEEP_DIR:-${PWD}/eval_runs/owt/sweep}"
@@ -79,7 +83,7 @@ sample() {  # name ckpt sampler x0_param sid_x0_param steps output_dir
       sampler.steps="$6" \
       sampler.num_sample_batches="${NUM_BATCHES}" \
       sampler.temperature=1 \
-      noise="${NOISE}" \
+      noise="${NOISE}" ${NOISE_ARGS} \
       loader.eval_batch_size="${BATCH_SIZE}" \
       loader.num_workers=4 \
       trainer.num_nodes=1 \
@@ -105,6 +109,7 @@ for path in sorted(glob.glob(os.path.join(sweep_dir, '*', 'samples*.json'))):
     x0_param=c['sampler'].get('x0_param'),
     sid_x0_param=c['sampler'].get('sid_x0_param'),
     noise=c['noise']['type'],
+    noise_power=c['noise'].get('power'),  # cosine-squared only
     steps=c['sampler']['steps'],
     batch_size=c['loader']['eval_batch_size'],
     num_samples=len(s['text']),
@@ -126,7 +131,7 @@ EOF
 
 echo "${SELECTED}" | while read -r index name ckpt sampler x0 sidx0; do
   for steps in ${STEPS}; do
-    out="${SWEEP_DIR}/${name}_${NOISE}_steps${steps}"
+    out="${SWEEP_DIR}/${name}_${NOISE_NAME}_steps${steps}"
     if [ -f "${out}/samples.json" ] && [ -f "${out}/samples_greedy.json" ]; then
       echo "=== ${name} steps ${steps}: already done, skipped"
       continue
