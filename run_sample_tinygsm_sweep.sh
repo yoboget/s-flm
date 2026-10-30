@@ -40,7 +40,7 @@ STEPS="32 64 128 256"        # space-separated numbers of sampling steps
 BATCH_SIZE="32"           # first batch size tried; halved on out of memory
 ANC_NOISE="log-linear"      # schedule of the ancestral runs and of the ancestral pass of ancestral_restart: log-linear / cosine
 ANC_NOISE_POWER="2"   # cosine only: alpha_t = cos(pi/2 t)^power (< 2 more steps near the data, > 2 near the noise)
-SID_NOISE="log-linear"          # schedule of the sid runs and of the sid steps after the restart: log-linear / cosine
+SID_NOISE="cosine"          # schedule of the sid runs and of the sid steps after the restart: log-linear / cosine
 SID_NOISE_POWER="0.5" # cosine only
 TEMPERATURE="1"            # sampling temperature (all steps); the run names get _T<TEMPERATURE> when it is not 1
 LAM="0.8"                    # ancestral_restart: proportion of the steps of the ancestral pass and restart noise level alpha
