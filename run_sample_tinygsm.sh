@@ -2,7 +2,7 @@
 #SBATCH --job-name tinygsm-duo-sid
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
-#SBATCH --gres=gpu1
+#SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
 #SBATCH --partition public-gpu,shared-gpu
