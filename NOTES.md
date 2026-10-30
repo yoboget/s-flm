@@ -11,6 +11,14 @@ All runs with 32, 64, 128 and 256 steps.
 - Ancestral: improves slightly PPL but degrades entropy significantly. 
 - Sid: No significant effect. 
 
+#### Codes for the runs
+  The current task list:                                                                                                        │samples.json (untracked)                                                                 
+  - 0: duo_sid_sidelbo                                                                                                          │──────────────────────────────────────────────────────────────────────────────────────── 
+  - 1: ce_denoiser_sid                                                                                                          │New file not yet staged.                                                                 
+  - 2: duo_ancestral                                                                                                            │Run `git add :/samples.json` to see line counts.                                         
+  - 3: ce_denoiser_restart                                                                                                      │                                                                                         
+  - 4: ce_denoiser_ancestral (the control)   
+
 ### TODO Next.
 - Select a schedule for sid and ablate temperature.
 - Depending on the results, run experiments with partial sid, ancestral_sid, and ancestral_restart.
