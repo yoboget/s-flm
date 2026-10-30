@@ -184,7 +184,7 @@ echo "${SELECTED}" | while read -r index name ckpt sampler x0 sidx0; do
     case "${TEMPERATURE}" in 1|1.0|1.00) ;; *) temp_name="_T${TEMPERATURE}" ;; esac
     out="${SWEEP_DIR}/${name}_${noise_name}${temp_name}_steps${steps}"
     if [ -f "${out}/samples.json" ] && [ -f "${out}/samples_greedy.json" ]; then
-      echo "=== ${name} steps ${steps}: already done, skipped"
+      echo "=== ${name} steps ${steps}: already done (${out}), skipped"
       continue
     fi
     echo "=== ${name} steps ${steps} (batch ${BATCH_SIZE} x ${NUM_BATCHES}, GPU memory ${GPU_MEMORY_MB} MB)"
