@@ -2,12 +2,12 @@
 #SBATCH --job-name tinygsm-duo-sid
 #SBATCH --error sbatch/error.e%j
 #SBATCH --output sbatch/out.o%j
-#SBATCH --gres=gpu:nvidia_rtx_a5000:1
+#SBATCH --gres=gpu1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
-#SBATCH --partition private-kalousis-gpu,private-cui-gpu,public-gpu,shared-gpu
+#SBATCH --private-cui-gpu,public-gpu,shared-gpu
 
-#SBATCH --time 06:00:00
+#SBATCH --time 0:30:00
 
 # Evaluate the pretrained TinyGSM DUO (single mode) on the GSM8K test set with the sid sampler,
 # inside the apptainer image. Same setup as scripts/sample/tinygsm/duo.sh, with sampler=sid.
@@ -27,7 +27,7 @@ SAMPLER="sid"             # sid / sid_partial / ancestral_sid / ancestral_restar
 RHO="0.1"                     # sid_partial: proportion of the positions resampled at each step
 LAM="0.75"                    # ancestral_restart: proportion of the steps of the ancestral pass and restart noise level alpha (any schedule; log-linear: t = 1 - LAM)
 RESTART_SAMPLER="sid"  # ancestral_restart: kernel after the restart, sid / ancestral (second ancestral pass, ablates the sid refinement)
-X0_PARAM="elbo"          # ancestral / ancestral_sid / ancestral_restart: elbo (DUO checkpoint) / posterior (cross-entropy finetuned checkpoint)
+X0_PARAM="posterior"          # ancestral / ancestral_sid / ancestral_restart: elbo (DUO checkpoint) / posterior (cross-entropy finetuned checkpoint)
 SID_X0_PARAM="posterior"  # sid steps (sid / sid_partial / ancestral_sid / ancestral_restart): posterior (output used as p(x0 | xt)) / elbo (DUO x_theta converted to p(x0 | xt))
 STEPS="1024"                  # number of sampling steps
 BATCH_SIZE="16"
