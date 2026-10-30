@@ -547,6 +547,8 @@ def _sample_gsm8k(diffusion_model, config, logger, tokenizer, fabric):
   records = []
   total_nfe = 0
   num_batches = 0
+  # Clock time of the sampling of each batch (seconds, GPU synchronized)
+  batch_times = []
   for batch_start in trange(
       0, len(local_indices), batch_size,
       desc=f'Rank {rank} sampling',
@@ -560,11 +562,15 @@ def _sample_gsm8k(diffusion_model, config, logger, tokenizer, fabric):
     padded, lengths = _pad_prefix_batch(
       all_ids, fabric.device)
 
+    samplers._synchronize(fabric.device)
+    start = time.perf_counter()
     samples, metadata = model.generate_samples(
       num_samples=B,
       num_steps=config.sampler.steps,
       prefix_tokens=padded,
       prefix_lengths=lengths)
+    samplers._synchronize(fabric.device)
+    batch_times.append(time.perf_counter() - start)
     total_nfe += metadata['nfe']
     num_batches += 1
 
@@ -586,6 +592,22 @@ def _sample_gsm8k(diffusion_model, config, logger, tokenizer, fabric):
 
   avg_nfe = total_nfe / max(num_batches, 1)
   logger.info(f'Rank {rank}: average NFE per batch: {avg_nfe:.1f}')
+  # Rank 0 batches. The first batch also compiles the sampler
+  # (torch.compile), hence the mean without it.
+  timing = dict(
+    sampling_time_s=sum(batch_times),
+    batch_times_s=batch_times,
+    batch_time_mean_s=sum(batch_times) / max(len(batch_times), 1),
+    batch_time_mean_without_first_s=(
+      sum(batch_times[1:]) / (len(batch_times) - 1)
+      if len(batch_times) > 1 else None),
+    batch_size=batch_size,
+    **_device_info(fabric.device))
+  if rank == 0:
+    logger.info(
+      f"Sampling clock time: {timing['sampling_time_s']:.1f} s "
+      f"({timing['batch_time_mean_s']:.2f} s per batch of {batch_size}) "
+      f"on {timing.get('gpu_name', 'cpu')}")
 
   with open(rank_json_path, 'w') as f:
     json.dump(records, f, indent=2)
@@ -594,14 +616,14 @@ def _sample_gsm8k(diffusion_model, config, logger, tokenizer, fabric):
   fabric.barrier()
 
   if fabric.global_rank != 0:
-    return None
+    return None, None
 
   all_records = []
   for r in range(world_size):
     path = os.path.join(config.gsm8k.output_dir, f'rank_{r:04d}.json')
     with open(path) as f:
       all_records.extend(json.load(f))
-  return all_records
+  return all_records, dict(avg_nfe=avg_nfe, timing=timing)
 
 
 @torch.no_grad()
@@ -616,13 +638,14 @@ def _gsm8k_eval(diffusion_model, config, logger, tokenizer):
   seed = config.seed + fabric.global_rank
   L.seed_everything(seed)
 
+  sampling_info = {}  # avg_nfe and timing, when sampled here
   if config.gsm8k.input_file is not None:
     if fabric.global_rank == 0:
       samples = _load_generated_gsm8k(config, logger)
     else:
       samples = None
   else:
-    samples = _sample_gsm8k(
+    samples, sampling_info = _sample_gsm8k(
       diffusion_model, config, logger, tokenizer, fabric)
   if fabric.global_rank == 0:
     logger.info(f'Total records evaluated: {len(samples)}')
@@ -666,6 +689,10 @@ def _gsm8k_eval(diffusion_model, config, logger, tokenizer):
                'accuracy_ci_hi': acc_ci_hi,
                'num_correct': correct,
                'num_total': len(samples),
+               'ckpt_name': config.eval.checkpoint_path,
+               'config': omegaconf.OmegaConf.to_container(
+                 config, resolve=True),
+               **(sampling_info or {}),
                'records': samples}
     if config.gsm8k.input_file is not None:
       results['input_file'] = config.gsm8k.input_file
