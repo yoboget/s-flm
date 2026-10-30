@@ -5,9 +5,9 @@
 #SBATCH --gres=gpu1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
-#SBATCH --public-gpu,shared-gpu
+#SBATCH --partition public-gpu,shared-gpu
 
-#SBATCH --time 0:30:00
+#SBATCH --time 00:30:00
 
 # Evaluate the pretrained TinyGSM DUO (single mode) on the GSM8K test set with the sid sampler,
 # inside the apptainer image. Same setup as scripts/sample/tinygsm/duo.sh, with sampler=sid.
