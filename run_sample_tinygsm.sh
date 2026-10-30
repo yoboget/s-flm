@@ -5,7 +5,7 @@
 #SBATCH --gres=gpu1
 #SBATCH --cpus-per-task 4
 #SBATCH --mem=32000
-#SBATCH --private-cui-gpu,public-gpu,shared-gpu
+#SBATCH --public-gpu,shared-gpu
 
 #SBATCH --time 0:30:00
 
