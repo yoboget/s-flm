@@ -8,7 +8,7 @@
 #SBATCH --mem=32000
 #SBATCH --partition public-gpu,shared-gpu
 
-#SBATCH --time 8:00:00
+#SBATCH --time 9:00:00
 
 # Sweep of the TinyGSM sampling space with the pretrained DUO, one configuration per array task:
 # GSM8K test accuracy (1319 problems, one answer each), for
@@ -36,7 +36,7 @@
 #   by whichever task finishes it)
 # A run whose results.json already exists is skipped, so resubmitting the job resumes the sweep.
 
-STEPS="32 64 128 256"        # space-separated numbers of sampling steps
+STEPS="32 64 128 256 512"        # space-separated numbers of sampling steps
 BATCH_SIZE="32"           # first batch size tried; halved on out of memory
 ANC_NOISE="log-linear"      # schedule of the ancestral runs and of the ancestral pass of ancestral_restart: log-linear / cosine
 ANC_NOISE_POWER="2"   # cosine only: alpha_t = cos(pi/2 t)^power (< 2 more steps near the data, > 2 near the noise)
