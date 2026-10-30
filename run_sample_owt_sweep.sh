@@ -26,23 +26,32 @@
 # `sbatch --array=1 run_sample_owt_sweep.sh`; without Slurm, set CONFIG below (the index or the
 # name, e.g. ce_denoiser_sid). Set the run in the settings below.
 # Results:
-#   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples.json  (texts + metrics, sampled last step;
+#   ${SWEEP_DIR}/<model>_<sampler>_<noise>[_T<temperature>]_steps<n>/samples.json  (texts + metrics, sampled last step;
 #   <noise>: the schedule of the sampler, SID_NOISE for sid, ANC_NOISE for ancestral and
 #   ANC_NOISE+SID_NOISE for ancestral_restart, as log-linear / cosine-p<power>)
-#   ${SWEEP_DIR}/<model>_<sampler>_<noise>_steps<n>/samples_greedy.json  (same, argmax last step)
+#   ${SWEEP_DIR}/<model>_<sampler>_<noise>[_T<temperature>]_steps<n>/samples_greedy.json  (same, argmax last step)
+#   (_T<temperature> only when TEMPERATURE is not 1, so each temperature has its own runs)
 #   ${SWEEP_DIR}/summary.json  (metrics only, both last steps of every run found in SWEEP_DIR;
 #   rebuilt after each run, by whichever task finishes it)
 # A run whose samples.json and samples_greedy.json already exist is skipped, so resubmitting the
 # job resumes the sweep.
 
 STEPS="32 64 128 256"        # space-separated numbers of sampling steps
-BATCH_SIZE=8                           # 16 runs out of memory on a 24 GB GPU
-NUM_BATCHES=64                         # 512 samples = NUM_BATCHES * BATCH_SIZE
+NUM_SAMPLES=512                        # samples per run = BATCH_SIZE * NUM_BATCHES
+# Batch size from the GPU memory: 16 fits in 32 GB (V100), not in 24 GB (Titan RTX, RTX 3090)
+GPU_MEMORY_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1)
+if [ "${GPU_MEMORY_MB:-0}" -ge 30000 ] 2>/dev/null; then
+  BATCH_SIZE=16
+else
+  BATCH_SIZE=8
+fi
+NUM_BATCHES=$((NUM_SAMPLES / BATCH_SIZE))
 PPL_BATCH_SIZE="8"  # sequences scored at once by gpt2-large
 ANC_NOISE="log-linear"      # schedule of the ancestral runs and of the ancestral pass of ancestral_restart: log-linear / cosine
 ANC_NOISE_POWER="2"   # cosine only: alpha_t = cos(pi/2 t)^power (< 2 more steps near the data, > 2 near the noise)
 SID_NOISE="cosine"          # schedule of the sid runs and of the sid steps after the restart: log-linear / cosine
 SID_NOISE_POWER="0.5" # cosine only
+TEMPERATURE="1"            # sampling temperature (all steps); the run names get _T<TEMPERATURE> when it is not 1
 LAM="0.8"                    # ancestral_restart: proportion of the steps of the ancestral pass and restart noise level alpha
 sched_name() { if [ "$1" = "cosine" ]; then echo "cosine-p$2"; else echo "$1"; fi; }
 ENTROPY_EVERY="0.1"  # entropy of xt and x0 every 10% of the steps (null to disable)
@@ -73,7 +82,7 @@ ckpt=$(echo "${SELECTED}" | awk '{print $3}')
 [ -f "${CKPT_DIR}/${ckpt}.ckpt" ] || { echo "Missing checkpoint ${CKPT_DIR}/${ckpt}.ckpt"; exit 1; }
 mkdir -p "${SWEEP_DIR}"
 
-sample() {  # name ckpt sampler x0_param sid_x0_param steps output_dir
+sample() {  # name ckpt sampler x0_param sid_x0_param steps output_dir batch_size num_batches
   RESTART_ARGS=""
   [ "$3" = "ancestral_restart" ] && RESTART_ARGS="sampler.lam=${LAM} ++sampler.restart_sampler=sid"
   ${RUN} -u -m main \
@@ -92,13 +101,13 @@ sample() {  # name ckpt sampler x0_param sid_x0_param steps output_dir
       ++sampler.x0_param="$4" \
       ++sampler.sid_x0_param="$5" \
       sampler.steps="$6" \
-      sampler.num_sample_batches="${NUM_BATCHES}" \
-      sampler.temperature=0.9 \
+      sampler.num_sample_batches="$9" \
+      sampler.temperature="${TEMPERATURE}" \
       ++sampler.ancestral_noise.type="${ANC_NOISE}" \
       ++sampler.ancestral_noise.power="${ANC_NOISE_POWER}" \
       ++sampler.sid_noise.type="${SID_NOISE}" \
       ++sampler.sid_noise.power="${SID_NOISE_POWER}" \
-      loader.eval_batch_size="${BATCH_SIZE}" \
+      loader.eval_batch_size="$8" \
       loader.num_workers=4 \
       trainer.num_nodes=1 \
       trainer.devices=1 \
@@ -136,6 +145,7 @@ for path in sorted(glob.glob(os.path.join(sweep_dir, '*', 'samples*.json'))):
     sid_noise=sid_noise['type'] if sid_noise else None,
     sid_noise_power=sid_noise.get('power') if sid_noise and sid_noise['type'] == 'cosine' else None,
     steps=c['sampler']['steps'],
+    temperature=c['sampler']['temperature'],
     batch_size=c['loader']['eval_batch_size'],
     num_samples=len(s['text']),
     gen_ppl=s['gen_ppl_first_chunk_retok'],
@@ -145,6 +155,9 @@ for path in sorted(glob.glob(os.path.join(sweep_dir, '*', 'samples*.json'))):
     # Clock time of the sampling (seconds, same for both last steps; runs before the timing: None)
     sampling_time_s=s.get('timing', {}).get('sampling_time_s'),
     batch_time_mean_without_first_s=s.get('timing', {}).get('batch_time_mean_without_first_s'),
+    # per sample, to compare runs with different batch sizes
+    sample_time_s=(s['timing']['batch_time_mean_without_first_s'] / s['timing']['batch_size']
+                   if s.get('timing', {}).get('batch_time_mean_without_first_s') else None),
     gpu_name=s.get('timing', {}).get('gpu_name'),
     hostname=s.get('timing', {}).get('hostname'),
     entropy_trajectory=s.get('entropy_trajectory')))
@@ -167,14 +180,25 @@ echo "${SELECTED}" | while read -r index name ckpt sampler x0 sidx0; do
       ancestral_restart) noise_name="$(sched_name "${ANC_NOISE}" "${ANC_NOISE_POWER}")+$(sched_name "${SID_NOISE}" "${SID_NOISE_POWER}")" ;;
       *) noise_name=$(sched_name "${ANC_NOISE}" "${ANC_NOISE_POWER}") ;;
     esac
-    out="${SWEEP_DIR}/${name}_${noise_name}_steps${steps}"
+    temp_name=""
+    case "${TEMPERATURE}" in 1|1.0|1.00) ;; *) temp_name="_T${TEMPERATURE}" ;; esac
+    out="${SWEEP_DIR}/${name}_${noise_name}${temp_name}_steps${steps}"
     if [ -f "${out}/samples.json" ] && [ -f "${out}/samples_greedy.json" ]; then
       echo "=== ${name} steps ${steps}: already done, skipped"
       continue
     fi
-    echo "=== ${name} steps ${steps} (batch ${BATCH_SIZE} x ${NUM_BATCHES})"
-    sample "${name}" "${ckpt}" "${sampler}" "${x0}" "${sidx0}" "${steps}" "${out}" \
-      || echo "=== ${name} steps ${steps} failed, skipped"
+    echo "=== ${name} steps ${steps} (batch ${BATCH_SIZE} x ${NUM_BATCHES}, GPU memory ${GPU_MEMORY_MB} MB)"
+    if ! sample "${name}" "${ckpt}" "${sampler}" "${x0}" "${sidx0}" "${steps}" "${out}" \
+        "${BATCH_SIZE}" "${NUM_BATCHES}"; then
+      if [ "${BATCH_SIZE}" -gt 8 ]; then
+        # e.g. out of memory: same number of samples in batches of 8
+        echo "=== ${name} steps ${steps} failed, retrying with batch 8 x $((NUM_SAMPLES / 8))"
+        sample "${name}" "${ckpt}" "${sampler}" "${x0}" "${sidx0}" "${steps}" "${out}" \
+          8 "$((NUM_SAMPLES / 8))" || echo "=== ${name} steps ${steps} failed again, skipped"
+      else
+        echo "=== ${name} steps ${steps} failed, skipped"
+      fi
+    fi
     summarize
   done
 done
