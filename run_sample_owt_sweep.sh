@@ -51,10 +51,10 @@ ANC_NOISE="log-linear"      # schedule of the ancestral runs and of the ancestra
 ANC_NOISE_POWER="2"   # cosine only: alpha_t = cos(pi/2 t)^power (< 2 more steps near the data, > 2 near the noise)
 SID_NOISE="cosine"          # schedule of the sid runs and of the sid steps after the restart: log-linear / cosine
 SID_NOISE_POWER="0.5" # cosine only
-TEMPERATURE="1"            # sampling temperature (all steps); the run names get _T<TEMPERATURE> when it is not 1
+TEMPERATURE="0.95"            # sampling temperature (all steps); the run names get _T<TEMPERATURE> when it is not 1
 LAM="0.8"                    # ancestral_restart: proportion of the steps of the ancestral pass and restart noise level alpha
 sched_name() { if [ "$1" = "cosine" ]; then echo "cosine-p$2"; else echo "$1"; fi; }
-ENTROPY_EVERY="0.1"  # entropy of xt and x0 every 10% of the steps (null to disable)
+ENTROPY_EVERY=null  # entropy of xt and x0 every 10% of the steps (null to disable)
 CKPT_DIR="${PWD}/checkpoints/owt"
 CE_CKPT="ce_denoiser_step22000"           # cross-entropy checkpoint (file name in CKPT_DIR, without .ckpt); ce_denoiser: step 40000
 SWEEP_DIR="${PWD}/eval_runs/owt/sweep_ce_step22000"  # one folder (and summary.json) per CE checkpoint; eval_runs/owt/sweep: step 40000
