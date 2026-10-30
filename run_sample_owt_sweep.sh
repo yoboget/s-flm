@@ -56,8 +56,8 @@ LAM="0.8"                    # ancestral_restart: proportion of the steps of the
 sched_name() { if [ "$1" = "cosine" ]; then echo "cosine-p$2"; else echo "$1"; fi; }
 ENTROPY_EVERY="0.1"  # entropy of xt and x0 every 10% of the steps (null to disable)
 CKPT_DIR="${PWD}/checkpoints/owt"
-CE_CKPT="ce_denoiser_step40000"           # cross-entropy checkpoint (file name in CKPT_DIR, without .ckpt); ce_denoiser: step 40000
-SWEEP_DIR="${PWD}/eval_runs/owt/sweep"  # one folder (and summary.json) per CE checkpoint; eval_runs/owt/sweep: step 40000
+CE_CKPT="ce_denoiser_step22000"           # cross-entropy checkpoint (file name in CKPT_DIR, without .ckpt); ce_denoiser: step 40000
+SWEEP_DIR="${PWD}/eval_runs/owt/sweep_ce_step22000"  # one folder (and summary.json) per CE checkpoint; eval_runs/owt/sweep: step 40000
 
 # index name checkpoint sampler x0_param sid_x0_param
 # ancestral_restart restarts with sid (restart_sampler=sid) at LAM; the run names get _lam<LAM>
