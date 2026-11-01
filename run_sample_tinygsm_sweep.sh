@@ -8,7 +8,7 @@
 #SBATCH --mem=32000
 #SBATCH --partition public-gpu,shared-gpu
 
-#SBATCH --time 9:00:00
+#SBATCH --time 12:00:00
 
 # Sweep of the TinyGSM sampling space with the pretrained DUO, one configuration per array task:
 # GSM8K test accuracy (1319 problems, one answer each), for
