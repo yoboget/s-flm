@@ -36,7 +36,7 @@
 #   by whichever task finishes it)
 # A run whose results.json already exists is skipped, so resubmitting the job resumes the sweep.
 
-STEPS="512"        # space-separated numbers of sampling steps
+STEPS="1024"        # space-separated numbers of sampling steps
 BATCH_SIZE="32"           # first batch size tried; halved on out of memory
 ANC_NOISE="log-linear"      # schedule of the ancestral runs and of the ancestral pass of ancestral_restart: log-linear / cosine
 ANC_NOISE_POWER="2"   # cosine only: alpha_t = cos(pi/2 t)^power (< 2 more steps near the data, > 2 near the noise)
