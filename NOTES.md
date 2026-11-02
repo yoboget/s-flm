@@ -19,6 +19,12 @@ All runs with 32, 64, 128 and 256 steps.
   - 3: ce_denoiser_restart                                                                                                      │                                                                                         
   - 4: ce_denoiser_ancestral (the control)   
 
+### TinyGSM
+
+0     │ duo_sid_sidelbo │ sid, with correction (sid_x0_param=elbo)
+1     │ duo_ancestral   │ ancestral, no correction   
+2     │ duo_restart     │ ancestral_restart at LAM (ancestral uncorrected)
+
 ### TODO Next.
 - Select a schedule for sid and ablate temperature.
 - Depending on the results, run experiments with partial sid, ancestral_sid, and ancestral_restart.

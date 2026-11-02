@@ -36,7 +36,7 @@
 # A run whose samples.json and samples_greedy.json already exist is skipped, so resubmitting the
 # job resumes the sweep.
 
-STEPS="32 64 128 256"        # space-separated numbers of sampling steps
+STEPS="512"        # space-separated numbers of sampling steps
 NUM_SAMPLES=512                        # samples per run = BATCH_SIZE * NUM_BATCHES
 # Batch size from the GPU memory: 16 fits in 32 GB (V100), not in 24 GB (Titan RTX, RTX 3090)
 GPU_MEMORY_MB=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -n 1)
